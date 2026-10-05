@@ -257,6 +257,39 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
 
+            # 8. Seed default master users if users table is empty
+            cursor.execute("SELECT COUNT(*) AS cnt FROM users;")
+            user_cnt = (cursor.fetchone() or {}).get("cnt", 0)
+            if user_cnt == 0:
+                admin_hash = hash_password("Admin@123")
+                cursor.execute("""
+                    INSERT INTO users 
+                        (id, worker_unique_id, phone, password_hash, role, full_name,
+                         designation, facility_name, facility_type, city_or_village,
+                         district_id, district_name, state)
+                    VALUES
+                        ('0015fc58-c17d-4155-94ee-9226d9c6696b', 'ADMIN-000001', '9999999999', %s, 'ADMIN', 'State Admin', 'State Health Administrator', 'NHM HQ', 'State HQ', 'Ranchi', 'D-20', 'Ranchi', 'Jharkhand'),
+                        ('88f24edb-0a68-450e-a4fe-d54625b34da5', 'JH559304', '7004369523', 'PASSWORD_RESET_REQUIRED', 'WORKER', 'Vikash Sharma', 'ANM', 'ratu', 'Other', 'ratu', 'D-20', 'Ranchi', 'Jharkhand')
+                    ON DUPLICATE KEY UPDATE full_name = VALUES(full_name);
+                """, (admin_hash,))
+                logger.info("Auto-seeded master Admin and Worker into clean database.")
+
+            # 9. Seed default core trainings if trainings table is empty
+            cursor.execute("SELECT COUNT(*) AS cnt FROM trainings;")
+            training_cnt = (cursor.fetchone() or {}).get("cnt", 0)
+            if training_cnt == 0:
+                cursor.execute("""
+                    INSERT INTO trainings 
+                        (id, category, status, title, mode, venue, start_at, end_at, attendance_enabled, gps_required, attendance_open_at, attendance_close_at)
+                    VALUES
+                        ('T-TB-001', 'TB', 'Published', 'National Tuberculosis Elimination Program (NTEP) Refresher', 'hybrid', 'State Health Training Centre, Ranchi / Online', '2026-03-01 09:00:00', '2026-12-31 18:00:00', 1, 0, '2026-03-01 08:00:00', '2026-12-31 19:00:00'),
+                        ('T-MCH-002', 'Maternal Health', 'Published', 'Comprehensive Maternal & Newborn Health Care Protocols', 'physical', 'District Hospital Conference Hall', '2026-03-01 09:00:00', '2026-12-31 18:00:00', 1, 0, '2026-03-01 08:00:00', '2026-12-31 19:00:00'),
+                        ('T-IMNCI-003', 'Child Nutrition', 'Published', 'e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification', 'online', 'State Tele-Health Training Portal', '2026-03-01 09:00:00', '2026-12-31 18:00:00', 1, 0, '2026-03-01 08:00:00', '2026-12-31 19:00:00'),
+                        ('T-UIP-004', 'Immunization', 'Published', 'Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness', 'hybrid', 'Ranchi Medical College Auditorium', '2026-03-01 09:00:00', '2026-12-31 18:00:00', 1, 0, '2026-03-01 08:00:00', '2026-12-31 19:00:00')
+                    ON DUPLICATE KEY UPDATE title = VALUES(title);
+                """)
+                logger.info("Auto-seeded 4 core clinical trainings into clean database.")
+
             logger.info("MySQL Schema Verified: 7 primary and AI tables active in jh_health_db.")
     except Exception as e:
         logger.warning("MySQL Schema Initialization warning: %s", e)

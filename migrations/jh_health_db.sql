@@ -9,6 +9,8 @@
 
 -- ------------------------------------------------------------------------------
 -- 1. DATABASE CREATION
+-- NOTE: If importing into a managed cloud database with an assigned name 
+-- (e.g., on Railway, Render, Aiven, PlanetScale), you may omit the CREATE/USE lines below.
 -- ------------------------------------------------------------------------------
 CREATE DATABASE IF NOT EXISTS `jh_health_db` 
     DEFAULT CHARACTER SET utf8mb4 
