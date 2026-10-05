@@ -3,7 +3,7 @@
    Enables 100% offline access & installation for health workers
    ========================================================= */
 
-const CACHE_NAME = "jh-training-v2";
+const CACHE_NAME = "jh-training-v3";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -44,6 +44,11 @@ self.addEventListener("fetch", (event) => {
 
   // Allow external API requests (like Google Apps Script) to pass directly
   if (url.origin !== location.origin) {
+    return;
+  }
+
+  // CRITICAL: Only cache GET requests for static assets. Never intercept POST/PUT/DELETE or /api/ endpoints.
+  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) {
     return;
   }
 

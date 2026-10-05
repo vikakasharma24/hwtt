@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS `event_logs` (
 -- ------------------------------------------------------------------------------
 -- Default Passwords:
 -- Admin: Admin@123 (Hash: 4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0)
--- Workers: Password reset required on first login via portal verification
+-- Workers: Worker@123 (Hash: 8c161b9497a7c55aa1f66def156369cb1240e1a1cc267770301a130df616c3c9)
 
 INSERT INTO `users` 
     (`id`, `worker_unique_id`, `phone`, `password_hash`, `role`, `full_name`,
@@ -197,7 +197,7 @@ INSERT INTO `users`
      `district_id`, `district_name`, `state`)
 VALUES
     ('0015fc58-c17d-4155-94ee-9226d9c6696b', 'ADMIN-000001', '9999999999', '4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0', 'ADMIN', 'State Admin', 'State Health Administrator', 'NHM HQ', 'State HQ', 'Ranchi', 'D-20', 'Ranchi', 'Jharkhand'),
-    ('88f24edb-0a68-450e-a4fe-d54625b34da5', 'JH559304', '7004369523', 'PASSWORD_RESET_REQUIRED', 'WORKER', 'Vikash Sharma', 'ANM', 'ratu', 'Other', 'ratu', 'D-20', 'Ranchi', 'Jharkhand')
+    ('88f24edb-0a68-450e-a4fe-d54625b34da5', 'JH559304', '7004369523', '8c161b9497a7c55aa1f66def156369cb1240e1a1cc267770301a130df616c3c9', 'WORKER', 'Vikash Sharma', 'ANM', 'ratu', 'Other', 'ratu', 'D-20', 'Ranchi', 'Jharkhand')
 ON DUPLICATE KEY UPDATE 
     full_name = VALUES(full_name),
     designation = VALUES(designation),

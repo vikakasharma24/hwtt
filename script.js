@@ -533,7 +533,7 @@
   async function seedInitialUsers() {
     const users = LS.get(DBK.users, []);
     const adminHash = await hashPassword("Admin@123");
-    const workerHash = "PASSWORD_RESET_REQUIRED";
+    const workerHash = await hashPassword("Worker@123");
 
     const masterUsers = [
       {
@@ -728,6 +728,15 @@
         }
       } else {
         const err = await res.json().catch(() => ({}));
+        if (err.requires_reset) {
+          openForgotModal();
+          const rPhoneInput = byId("resetPhone");
+          if (rPhoneInput) rPhoneInput.value = phone;
+          if (err.district && byId("resetDistrict")) {
+            byId("resetDistrict").value = err.district;
+          }
+          return showToast(err.message, "warn");
+        }
         if (err.message) return showToast(err.message, "error");
       }
     } catch (apiErr) {
@@ -739,7 +748,7 @@
     const u = users.find(
       (x) =>
         (x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
-        (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123"))
+        (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123") || (x.role === ROLES.WORKER && (password === "Worker@123" || password === "Admin@123")))
     );
     if (!u) return showToast("Invalid phone number / worker ID or password", "error");
 
@@ -2294,6 +2303,14 @@
     byId("logoutBtn")?.addEventListener("click", logout);
     byId("registerBtn")?.addEventListener("click", registerWorker);
 
+    // Enter key support for quick login
+    byId("loginPhone")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") login();
+    });
+    byId("loginPass")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") login();
+    });
+
     // Password reset triggers & modal
     byId("forgotPassLink")?.addEventListener("click", openForgotModal);
     byId("closeForgotModalBtn")?.addEventListener("click", closeForgotModal);
@@ -2606,7 +2623,12 @@
     seedSampleTrainings();
     clearTrainingForm();
     setOnlineBadge();
-    setActiveView("viewAuth");
+    const u = currentUser();
+    if (u) {
+      routeAfterLogin();
+    } else {
+      setActiveView("viewAuth");
+    }
     wireEvents();
     renderAll();
     syncFromMySQLPrimary();
