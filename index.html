@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#2563eb">
+  <title>Jharkhand Health Training Portal</title>
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">JH</div>
+        <div class="brand-text">
+          <div class="title">Jharkhand Health Training Portal</div>
+          <div class="sub">Department of Health, Medical Education & Family Welfare • Govt. of Jharkhand</div>
+        </div>
+      </div>
+
+      <div class="right">
+        <div class="net">
+          <span id="netBadge" class="badge">…</span>
+          <span id="pendingBadge" class="badge warn">0 Pending</span>
+          <span class="muted">Last sync: <span id="lastSync" class="mono">—</span></span>
+          <button id="syncBtn" class="btn small" type="button" title="Sync local actions to Google Sheets">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            </svg>
+            Retry Sync
+          </button>
+          <button id="viewQueueBtn" class="btn small ghost" type="button" title="View offline queue">Queue</button>
+          <button id="installAppBtn" class="btn small ghost hidden" type="button" title="Install App on Device">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Install App
+          </button>
+        </div>
+
+        <div id="whoami" class="whoami">Not logged in</div>
+        <button id="logoutBtn" class="btn small danger" style="display:none" type="button">Logout</button>
+      </div>
+    </header>
+
+    <!-- OFFLINE QUEUE DROPDOWN -->
+    <div class="queueWrap">
+      <div id="queuePanel" class="queueCard hidden">
+        <div class="queueHeader">
+          <div>
+            <div class="cardTitle" style="margin-bottom:2px">Offline Sync Queue</div>
+            <div class="muted">Actions saved locally while offline or during network issues</div>
+          </div>
+          <div class="row gap">
+            <button id="queueSyncNowBtn" class="btn small" type="button">Sync Now</button>
+            <button id="clearQueueBtn" class="btn small ghost" type="button">Clear</button>
+            <button id="closeQueueBtn" class="closeBtn" type="button" aria-label="Close Queue">&times;</button>
+          </div>
+        </div>
+        <div id="queueList" class="queueListContainer"></div>
+        <div class="hint" style="margin-top:10px">When connection is restored, pending actions sync automatically to Google Sheets.</div>
+      </div>
+    </div>
+
+    <!-- MAIN TABS -->
+    <nav class="tabs">
+      <button class="tab active" data-view="viewAuth" type="button">Login / Register</button>
+      <button class="tab hidden" data-view="viewWorker" data-role="WORKER" type="button">Worker Dashboard</button>
+      <button class="tab hidden" data-view="viewAdmin" data-role="ADMIN" type="button">Admin Dashboard</button>
+    </nav>
+
+    <!-- MAIN CONTENT -->
+    <main class="content">
+      <!-- AUTH VIEW -->
+      <section id="viewAuth" class="view">
+        <div class="grid2">
+          <!-- LOGIN CARD -->
+          <div class="card">
+            <div class="cardTitle">Portal Login</div>
+            <div class="form">
+              <div class="field">
+                <label>Registered Phone Number or Worker ID</label>
+                <input id="loginPhone" type="text" maxlength="32" placeholder="e.g., 7777777777 or JH254248" />
+              </div>
+              <div class="field">
+                <label>Password</label>
+                <div class="passWrap">
+                  <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" />
+                  <button type="button" class="eyeToggleBtn" data-target="loginPass" aria-label="Toggle password visibility">
+                    <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                      <line x1="1" y1="1" x2="23" y2="23"></line>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="row between" style="margin-top:-2px">
+                <span class="hint">Secure login with SHA-256</span>
+                <button type="button" id="forgotPassLink" class="linkBtn">Forgot Password?</button>
+              </div>
+
+              <button id="loginBtn" class="btn" type="button" style="margin-top:6px">Login to Portal</button>
+            </div>
+          </div>
+
+          <!-- WORKER REGISTRATION CARD -->
+          <div class="card">
+            <div class="cardTitle">Worker Self-Registration</div>
+            <div class="form">
+              <div class="row2">
+                <div class="field">
+                  <label>Full Name *</label>
+                  <input id="rName" placeholder="Full name as per records" />
+                </div>
+                <div class="field">
+                  <label>Phone Number * (10 digits)</label>
+                  <input id="rPhone" type="tel" maxlength="10" placeholder="10-digit mobile" />
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Password * (min 6 characters)</label>
+                  <div class="passWrap">
+                    <input id="rPass" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
+                    <button type="button" class="eyeToggleBtn" data-target="rPass" aria-label="Toggle password visibility">
+                      <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                      <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Designation *</label>
+                  <select id="rDesignation">
+                    <option>ANM</option>
+                    <option>GNM</option>
+                    <option>CHO</option>
+                    <option>Staff Nurse</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Gender</label>
+                  <select id="rGender">
+                    <option value="">Select</option>
+                    <option>Female</option>
+                    <option>Male</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Experience (years)</label>
+                  <input id="rExp" type="number" min="0" max="60" placeholder="e.g., 3" />
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Health Facility Name *</label>
+                  <input id="rFacility" placeholder="PHC/CHC/DH/Sub-centre name" />
+                </div>
+                <div class="field">
+                  <label>Facility Type *</label>
+                  <select id="rFacilityType">
+                    <option>PHC</option>
+                    <option>CHC</option>
+                    <option>DH</option>
+                    <option>Sub-centre</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>City / Village</label>
+                  <input id="rCity" placeholder="City or village" />
+                </div>
+
+                <div class="field">
+                  <label>District *</label>
+                  <select id="rDistrict"></select>
+                  <div id="rDistrictLabel" class="hint">Selected: —</div>
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Email (optional)</label>
+                  <input id="rEmail" type="email" placeholder="email@example.com" />
+                </div>
+                <div class="field">
+                  <label>State</label>
+                  <input id="rState" value="Jharkhand" readonly style="background:#f1f5f9;cursor:not-allowed;" />
+                </div>
+              </div>
+
+              <label class="check" style="margin-top:4px">
+                <input id="rConsent" type="checkbox" />
+                <span>I accept consent to use my training and assessment data for program monitoring.</span>
+              </label>
+
+              <button id="registerBtn" class="btn" type="button" style="margin-top:6px">Create Account</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- WORKER VIEW -->
+      <section id="viewWorker" class="view hidden">
+        <div class="grid2">
+          <div class="card">
+            <div class="cardTitle">
+              <span>Worker Dashboard & Achievements</span>
+              <button id="wRefreshBtn" class="btn ghost small" type="button">Refresh</button>
+            </div>
+            <div id="workerDashboard" class="list"></div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Available Trainings</div>
+            <div class="row between" style="margin-bottom:12px">
+              <div class="muted">Only Published/Completed trainings are visible</div>
+              <select id="wCatFilter" class="smallSelect">
+                <option value="">All Categories</option>
+                <option>Maternal Health</option>
+                <option>Child Health</option>
+                <option>Immunization</option>
+                <option>NCD</option>
+                <option>TB</option>
+                <option>Data Reporting</option>
+                <option>Other</option>
+              </select>
+            </div>
+
+            <div id="workerTrainings" class="list"></div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">Pre / Post Assessment</div>
+
+            <div class="form">
+              <div class="field">
+                <label>Select Training for Assessment</label>
+                <select id="testTrainingSelect"></select>
+                <div id="postGateNote" class="hint"></div>
+              </div>
+
+              <div class="row gap">
+                <button id="takePreBtn" class="btn" type="button">Take Pre-Test</button>
+                <button id="takePostBtn" class="btn" type="button">Take Post-Test</button>
+              </div>
+            </div>
+
+            <div id="testPanel" class="panel hidden"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ADMIN VIEW -->
+      <section id="viewAdmin" class="view hidden">
+        <div class="grid2">
+          <div class="card">
+            <div class="cardTitle">Admin Monitoring Dashboard</div>
+
+            <div class="admFilters">
+              <div class="row2">
+                <div class="field" style="grid-column:1 / -1">
+                  <label>Filter by Category</label>
+                  <select id="admCategoryFilter">
+                    <option value="">All Categories</option>
+                    <option>Maternal Health</option>
+                    <option>Child Health</option>
+                    <option>Immunization</option>
+                    <option>NCD</option>
+                    <option>TB</option>
+                    <option>Data Reporting</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+              </div>
+              <div class="muted">Category filter applies to trainings, attendance, and assessment metrics.</div>
+            </div>
+
+            <div class="sep"></div>
+            <div id="adminDashboard" class="kpiGrid"></div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">Performance Analytics (Avg % + Pass Rate)</div>
+            <div id="adminScoreViz" class="kpiGrid"></div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">Trainings Catalog & Performance</div>
+            <div id="adminTrainingDetail" class="list"></div>
+
+            <div class="sep"></div>
+            <div class="row2">
+              <div class="field">
+                <label>Worker Monitoring — Training Filter</label>
+                <select id="admTrainingPick"></select>
+                <div class="hint">Select a training to view workers who attempted PRE/POST for that specific training.</div>
+              </div>
+              <div class="field">
+                <label>Search Worker (Name / Phone / ID)</label>
+                <input id="admWorkerSearch" placeholder="Type name, phone or ID to filter…" />
+                <div class="hint">Live filtering across registered workers.</div>
+              </div>
+            </div>
+
+            <div class="cardTitle" style="margin-top:14px">Registered Workers Monitoring (Details + PRE/POST)</div>
+            <div id="adminWorkerPerf" class="tableLike"></div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Create / Edit Training</div>
+
+            <div class="form">
+              <div class="row2">
+                <div class="field">
+                  <label>Category</label>
+                  <select id="tCategory">
+                    <option>Maternal Health</option>
+                    <option>Child Health</option>
+                    <option>Immunization</option>
+                    <option>NCD</option>
+                    <option>TB</option>
+                    <option>Data Reporting</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Status</label>
+                  <select id="tStatus">
+                    <option>Draft</option>
+                    <option>Published</option>
+                    <option>Completed</option>
+                    <option>Cancelled</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Training Title</label>
+                <input id="tTitle" placeholder="e.g., Maternal & Child Health Protocol Refresher" />
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Start Date/Time</label>
+                  <input id="tStart" type="datetime-local" />
+                </div>
+                <div class="field">
+                  <label>End Date/Time</label>
+                  <input id="tEnd" type="datetime-local" />
+                </div>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Mode</label>
+                  <select id="tMode">
+                    <option>online</option>
+                    <option>physical</option>
+                    <option>hybrid</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Venue / Link</label>
+                  <input id="tVenue" placeholder="Venue or online conference link" />
+                </div>
+              </div>
+
+              <div class="row2">
+                <label class="check">
+                  <input id="tAttendanceEnabled" type="checkbox" checked />
+                  <span>Attendance enabled</span>
+                </label>
+
+                <label class="check">
+                  <input id="tGps" type="checkbox" />
+                  <span>GPS required</span>
+                </label>
+              </div>
+
+              <div class="row2">
+                <div class="field">
+                  <label>Attendance Open At (optional)</label>
+                  <input id="tOpen" type="datetime-local" />
+                </div>
+                <div class="field">
+                  <label>Attendance Close At (optional)</label>
+                  <input id="tClose" type="datetime-local" />
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Pre-Test JSON (Questions array)</label>
+                <textarea id="tPreJson" rows="6"></textarea>
+                <div class="hint">Admin editable array of MCQ / True-False questions.</div>
+              </div>
+
+              <div class="field">
+                <label>Post-Test JSON (Questions array)</label>
+                <textarea id="tPostJson" rows="6"></textarea>
+                <div class="hint">Admin editable array of MCQ / True-False questions.</div>
+              </div>
+
+              <div class="row gap">
+                <button id="saveTrainingBtn" class="btn" type="button">Save Training</button>
+                <button id="clearTrainingBtn" class="btn ghost" type="button">Clear</button>
+              </div>
+            </div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">Category Training Summary</div>
+            <div id="adminTrainingSummary" class="list"></div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">Data Export (CSV)</div>
+            <div class="row gap wrap">
+              <button class="btn ghost small" data-export="workers" type="button">Export Workers CSV</button>
+              <button class="btn ghost small" data-export="trainings" type="button">Export Trainings CSV</button>
+              <button class="btn ghost small" data-export="scores" type="button">Export Scores CSV</button>
+              <button class="btn small" data-export="master" type="button">Export Master CSV</button>
+            </div>
+
+            <div class="sep"></div>
+            <div class="cardTitle">CSV Preview</div>
+            <pre id="csvPreview" class="pre"></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- FORGOT / RESET PASSWORD MODAL -->
+    <div id="forgotModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="forgotModalTitle">
+      <div class="modalDialog">
+        <div class="modalHead">
+          <div id="forgotModalTitle" class="modalTitle">Reset Portal Password</div>
+          <button id="closeForgotModalBtn" class="closeBtn" type="button" aria-label="Close modal">&times;</button>
+        </div>
+
+        <div class="form">
+          <p class="muted" style="margin-top:0">
+            Verify your registered identity to reset your access password. Please enter your registered 10-digit phone number along with your district or registered email.
+          </p>
+
+          <div class="field">
+            <label>Registered Phone Number * (10 digits)</label>
+            <input id="resetPhone" type="tel" maxlength="10" placeholder="e.g., 9876543210" />
+          </div>
+
+          <div class="row2">
+            <div class="field">
+              <label>Registered District *</label>
+              <select id="resetDistrict"></select>
+            </div>
+            <div class="field">
+              <label>Registered Email (or District above)</label>
+              <input id="resetEmail" type="email" placeholder="e.g., worker@example.com" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>New Password * (min 6 characters)</label>
+            <div class="passWrap">
+              <input id="resetNewPass" type="password" placeholder="New password (min 6 chars)" autocomplete="new-password" />
+              <button type="button" class="eyeToggleBtn" data-target="resetNewPass" aria-label="Toggle password visibility">
+                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                  <line x1="1" y1="1" x2="23" y2="23"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Confirm New Password *</label>
+            <div class="passWrap">
+              <input id="resetConfirmPass" type="password" placeholder="Confirm new password" autocomplete="new-password" />
+              <button type="button" class="eyeToggleBtn" data-target="resetConfirmPass" aria-label="Toggle password visibility">
+                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                  <line x1="1" y1="1" x2="23" y2="23"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="row gap end" style="margin-top:12px">
+            <button id="resetCancelBtn" class="btn ghost" type="button">Cancel</button>
+            <button id="resetSubmitBtn" class="btn" type="button">Reset Password</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKER CERTIFICATE MODAL -->
+    <div id="certModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="certModalTitle">
+      <div class="modalDialog certDialog">
+        <div class="modalHead">
+          <div id="certModalTitle" class="modalTitle">Official Training Completion Certificate</div>
+          <div class="row gap">
+            <button id="printCertBtn" class="btn small" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                <rect x="6" y="14" width="12" height="8"></rect>
+              </svg>
+              Print / Save PDF
+            </button>
+            <button id="closeCertModalBtn" class="closeBtn" type="button" aria-label="Close certificate">&times;</button>
+          </div>
+        </div>
+
+        <div id="certContainer">
+          <!-- Dynamically populated certificate -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS CONTAINER -->
+    <div id="toastContainer" class="toastContainer" aria-live="polite"></div>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="muted">
+        Government of Jharkhand • Department of Health, Medical Education & Family Welfare • National Health Mission (NHM)
+      </div>
+    </footer>
+  </div>
+
+  <script src="./static/js/app.js"></script>
+  <script src="./script.js"></script>
+</body>
+</html>

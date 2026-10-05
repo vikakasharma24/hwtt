@@ -1,0 +1,38 @@
+# Python & Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Database & SQLite files
+*.sqlite3
+*.db
+
+# Logs & Runtime
+*.log
+*.pid
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+.gemini/
+*.swp
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Scratch & Temporary
+scratch/
+test_*.py

@@ -1,0 +1,156 @@
+"""
+==============================================================================
+Google Sheet Data Importer to MySQL Primary Database
+==============================================================================
+Populates jh_health_db with initial users from the Google Sheet
+and pre-configured training curriculum.
+==============================================================================
+"""
+
+import os
+import sys
+import uuid
+import hashlib
+import pymysql
+
+PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1"
+
+def hash_password(plain_text: str) -> str:
+    data = (plain_text + ":" + PASSWORD_SALT).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+def run():
+    host = os.getenv("MYSQL_HOST", "localhost")
+    user = os.getenv("MYSQL_USER", "root")
+    password = os.getenv("MYSQL_PASSWORD", "Falcon@123")
+    database = os.getenv("MYSQL_DB", "jh_health_db")
+    port = int(os.getenv("MYSQL_PORT", 3306))
+
+    print("=================================================================")
+    print(">> POPULATING MYSQL PRIMARY DATABASE FROM GOOGLE SHEETS")
+    print(f"   Connecting to {user}@{host}:{port}/{database}...")
+    print("=================================================================")
+
+    conn = pymysql.connect(host=host, user=user, password=password, database=database, autocommit=True)
+
+    default_admin_hash = hash_password("Admin@123")
+    default_worker_hash = "PASSWORD_RESET_REQUIRED"
+
+    # Frontline Workers from Google Sheet Event_Log & Users tab
+    initial_users = [
+        {
+            "id": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+            "worker_unique_id": "ADMIN-000001",
+            "phone": "9999999999",
+            "password_hash": default_admin_hash,
+            "role": "ADMIN",
+            "full_name": "State Admin",
+            "designation": "State Health Administrator",
+            "facility_name": "Department of Health, NHM",
+            "facility_type": "State HQ",
+            "city_or_village": "Ranchi",
+            "district_id": "D-20",
+            "district_name": "Ranchi",
+            "state": "Jharkhand"
+        },
+        {
+            "id": "88f24edb-0a68-450e-a4fe-d54625b34da5",
+            "worker_unique_id": "JH559304",
+            "phone": "7004369523",
+            "password_hash": default_worker_hash,
+            "role": "WORKER",
+            "full_name": "Vikash Sharma",
+            "designation": "ANM",
+            "facility_name": "ratu",
+            "facility_type": "Other",
+            "city_or_village": "ratu",
+            "district_id": "D-20",
+            "district_name": "Ranchi",
+            "state": "Jharkhand"
+        }
+    ]
+
+    with conn.cursor() as cur:
+        # Insert or update users
+        user_insert_sql = """
+            INSERT INTO users 
+                (id, worker_unique_id, phone, password_hash, role, full_name,
+                 designation, facility_name, facility_type, city_or_village,
+                 district_id, district_name, state)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                full_name = VALUES(full_name),
+                designation = VALUES(designation),
+                facility_name = VALUES(facility_name),
+                facility_type = VALUES(facility_type),
+                city_or_village = VALUES(city_or_village),
+                district_name = VALUES(district_name)
+        """
+        for u in initial_users:
+            cur.execute(user_insert_sql, (
+                u["id"], u["worker_unique_id"], u["phone"], u["password_hash"],
+                u["role"], u["full_name"], u["designation"], u["facility_name"],
+                u["facility_type"], u["city_or_village"], u["district_id"],
+                u["district_name"], u["state"]
+            ))
+            print(f"[USER IMPORTED] {u['full_name']} ({u['worker_unique_id']}) - Phone: {u['phone']} [{u['role']}]")
+
+        # Seed core clinical training modules
+        sample_trainings = [
+            (
+                "T-TB-001", "TB", "Published",
+                "National Tuberculosis Elimination Program (NTEP) Refresher",
+                "hybrid", "State Health Training Centre, Ranchi / Online",
+                "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0,
+                "2026-03-01 08:00:00", "2026-12-31 19:00:00"
+            ),
+            (
+                "T-MCH-002", "Maternal Health", "Published",
+                "Comprehensive Maternal & Newborn Health Care Protocols",
+                "physical", "District Hospital Conference Hall",
+                "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0,
+                "2026-03-01 08:00:00", "2026-12-31 19:00:00"
+            ),
+            (
+                "T-IMNCI-003", "Child Nutrition", "Published",
+                "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification",
+                "online", "State Tele-Health Training Portal",
+                "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0,
+                "2026-03-01 08:00:00", "2026-12-31 19:00:00"
+            ),
+            (
+                "T-UIP-004", "Immunization", "Published",
+                "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
+                "hybrid", "Ranchi Medical College Auditorium",
+                "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0,
+                "2026-03-01 08:00:00", "2026-12-31 19:00:00"
+            )
+        ]
+
+        training_sql = """
+            INSERT INTO trainings 
+                (id, category, status, title, mode, venue, start_at, end_at, 
+                 attendance_enabled, gps_required, attendance_open_at, attendance_close_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                venue = VALUES(venue),
+                status = VALUES(status)
+        """
+        for t in sample_trainings:
+            cur.execute(training_sql, t)
+            print(f"[TRAINING READY] {t[3]} ({t[0]})")
+
+        # Verify summary counts
+        cur.execute("SELECT COUNT(*) FROM users;")
+        user_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM trainings;")
+        training_count = cur.fetchone()[0]
+
+    conn.close()
+    print("=================================================================")
+    print(f"[SUCCESS] Migration complete: {user_count} Users, {training_count} Trainings active in MySQL.")
+    print("=================================================================")
+
+if __name__ == "__main__":
+    run()

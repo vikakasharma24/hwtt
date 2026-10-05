@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: jh_mysql_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: Falcon@123
+      MYSQL_DATABASE: jh_health_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./jh_health_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pFalcon@123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: jh_health_portal
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: Falcon@123
+      MYSQL_DB: jh_health_db
+      PASSWORD_SALT: JH_HEALTH_PORTAL_SALT_v1
+    ports:
+      - "5000:5000"
+
+volumes:
+  mysql_data:
