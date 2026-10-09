@@ -11,18 +11,30 @@
 (function (window, document) {
   "use strict";
 
+  let lastFetchedUser = null;
+  let lastFetchTime = 0;
+
   /**
    * Main authorization hook. Call this immediately upon worker login or token verification.
    * @param {string} userId - Frontline worker unique identifier (e.g., "JH102938")
+   * @param {boolean} [force=false] - Whether to bypass throttle cache
    */
-  async function onUserAuthorized(userId) {
+  async function onUserAuthorized(userId, force = false) {
     if (!userId) {
       console.warn("[AI_HOOK] onUserAuthorized called without valid userId.");
       return;
     }
 
+    const now = Date.now();
+    if (!force && lastFetchedUser === userId && (now - lastFetchTime < 2000)) {
+      return;
+    }
+    lastFetchedUser = userId;
+    lastFetchTime = now;
+
     try {
-      const response = await fetch(`/api/get-recommendations/${encodeURIComponent(userId)}`, {
+      const recUrl = window.apiUrl ? window.apiUrl(`/api/get-recommendations/${encodeURIComponent(userId)}`) : `/api/get-recommendations/${encodeURIComponent(userId)}`;
+      const response = await fetch(recUrl, {
         method: "GET",
         headers: { "Accept": "application/json" }
       });

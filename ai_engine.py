@@ -34,7 +34,7 @@ REMEDIAL_CATALOG: Dict[str, Dict[str, str]] = {
     },
     "Immunization": {
         "topic_id": "TOPIC-UIP-COLD-04",
-        "title": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
+        "title": "Cold Chain Logistics, Temperature Maintenance & Anaphylaxis Protocol",
         "video_url": "https://assets.nhm.gov.in/training/uip_cold_chain_management.mp4"
     },
     "Child Health": {
@@ -79,13 +79,16 @@ class AdaptiveLearningEngine:
                 [50.0, 52.0,   2.0, 150, 0.65],
                 [60.0, 55.0,  -5.0,  90, 0.50],
                 [20.0, 48.0,  28.0, 200, 0.70],
+                [30.0, 45.0,  15.0, 380, 0.80],
+                [40.0, 50.0,  10.0, 420, 0.70],
 
                 # Archetype: Medium Risk (Marginal pass, low delta, moderate past failure)
                 [50.0, 65.0,  15.0, 320, 0.35],
                 [55.0, 68.0,  13.0, 290, 0.30],
                 [45.0, 62.0,  17.0, 310, 0.40],
-                [62.0, 70.0,   8.0, 260, 0.25],
-                [60.0, 72.0,  12.0, 280, 0.20],
+                [62.0, 70.0,   8.0, 150, 0.25],
+                [60.0, 72.0,  12.0, 180, 0.20],
+                [50.0, 65.0,  15.0, 120, 0.30],
 
                 # Archetype: Low Risk (High score, positive delta, low failure density)
                 [50.0, 85.0,  35.0, 450, 0.10],
@@ -93,13 +96,17 @@ class AdaptiveLearningEngine:
                 [75.0, 95.0,  20.0, 520, 0.00],
                 [80.0, 100.0, 20.0, 480, 0.00],
                 [70.0, 88.0,  18.0, 390, 0.05],
+                [0.0,  100.0, 100.0, 180, 0.10],
+                [80.0, 100.0, 20.0, 90,  0.00],
+                [70.0, 95.0,  25.0, 120, 0.00],
+                [100.0, 100.0, 0.0, 150, 0.00],
             ], dtype=float)
 
             # Labels: 0 = Low Risk, 1 = Medium Risk, 2 = High Risk
             y_calibration = np.array([
-                2, 2, 2, 2, 2,  # High
-                1, 1, 1, 1, 1,  # Medium
-                0, 0, 0, 0, 0   # Low
+                2, 2, 2, 2, 2, 2, 2,  # High
+                1, 1, 1, 1, 1, 1,     # Medium
+                0, 0, 0, 0, 0, 0, 0, 0, 0  # Low
             ], dtype=int)
 
             clf = DecisionTreeClassifier(
@@ -154,10 +161,18 @@ class AdaptiveLearningEngine:
                 class_map = {0: "Low", 1: "Medium", 2: "High"}
                 predicted_risk = class_map.get(pred_class, "Medium")
 
-                # Sanity assertion: post-test strictly below 60% must always flag High or Medium
+                # Sanity assertion 1: post-test strictly below 60% must always flag High
                 if post < 60.0 and predicted_risk == "Low":
                     predicted_risk = "High"
                     confidence = 0.95
+                # Sanity assertion 2: Clinical Mastery (post-test >= 80%) represents verified clinical competence
+                elif post >= 80.0:
+                    predicted_risk = "Low"
+                    confidence = max(confidence, 0.95)
+                # Sanity assertion 3: Passing post-test (60% - 79%) is at most Medium risk unless chronic failure
+                elif post >= 60.0 and predicted_risk == "High" and failure_density < 0.75:
+                    predicted_risk = "Medium"
+                    confidence = 0.85
 
                 return predicted_risk, confidence
 
@@ -180,27 +195,38 @@ class AdaptiveLearningEngine:
         if post_score < 60.0:
             # Did not pass minimum mastery threshold
             return "High", 0.98
+        elif post_score >= 80.0:
+            # Verified clinical competence / mastery
+            return "Low", 0.95
         elif score_delta <= 0.0 and post_score < 75.0:
-            # Negative or stagnant progress
+            # Negative or stagnant progress on marginal score
             return "High", 0.90
-        elif failure_density >= 0.50:
+        elif failure_density >= 0.75:
             # Chronic struggle history
-            return "High", 0.92
-        elif 60.0 <= post_score < 75.0 or (score_delta < 10.0 and post_score < 80.0):
+            return "High", 0.88
+        elif 60.0 <= post_score < 80.0:
             # Marginal pass
             return "Medium", 0.85
         else:
-            # Verified clinical competence
             return "Low", 0.90
 
     def get_remedial_metadata(self, module_name: str) -> Dict[str, str]:
         """
-        Resolves the appropriate remedial topic, title, and video tutorial URL.
+        Resolves the appropriate remedial topic, title, and video tutorial URL
+        using flexible keyword matching against the clinical catalog.
         """
-        for key, val in REMEDIAL_CATALOG.items():
-            if key.lower() in module_name.lower():
-                return val
-        return REMEDIAL_CATALOG.get(module_name, REMEDIAL_CATALOG["Default"])
+        name_lower = (module_name or "").lower()
+        if any(k in name_lower for k in ("imnci", "nutrition", "sam", "malnutrition")):
+            return REMEDIAL_CATALOG["e-IMNCI Child Nutrition"]
+        elif any(k in name_lower for k in ("tb", "tuberculosis", "ntep", "dots")):
+            return REMEDIAL_CATALOG["TB Case Management"]
+        elif any(k in name_lower for k in ("maternal", "newborn", "pph", "obstetric")):
+            return REMEDIAL_CATALOG["Maternal Health"]
+        elif any(k in name_lower for k in ("immuniz", "vaccin", "cold chain", "uip")):
+            return REMEDIAL_CATALOG["Immunization"]
+        elif any(k in name_lower for k in ("pneumonia", "respiratory", "child health")):
+            return REMEDIAL_CATALOG["Child Health"]
+        return REMEDIAL_CATALOG["Default"]
 
 
 # Global thread-safe singleton

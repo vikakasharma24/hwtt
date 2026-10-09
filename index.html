@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,9 +10,12 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
 </head>
+
 <body>
   <div class="app">
     <!-- TOPBAR -->
@@ -29,13 +33,14 @@
           <span id="netBadge" class="badge">…</span>
           <span id="pendingBadge" class="badge warn">0 Pending</span>
           <span class="muted">Last sync: <span id="lastSync" class="mono">—</span></span>
-          <button id="syncBtn" class="btn small" type="button" title="Sync local actions to Google Sheets">
+          <button id="syncBtn" class="btn small" type="button" title="Sync local actions to Aiven Enterprise Database">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
             </svg>
             Retry Sync
           </button>
           <button id="viewQueueBtn" class="btn small ghost" type="button" title="View offline queue">Queue</button>
+          <button id="apiServerBtn" class="btn small ghost" type="button" title="Configure Live Cloud Backend API URL">API Server</button>
           <button id="installAppBtn" class="btn small ghost hidden" type="button" title="Install App on Device">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -66,7 +71,7 @@
           </div>
         </div>
         <div id="queueList" class="queueListContainer"></div>
-        <div class="hint" style="margin-top:10px">When connection is restored, pending actions sync automatically to Google Sheets.</div>
+        <div class="hint" style="margin-top:10px">When connection is restored, pending actions sync automatically to Aiven Enterprise Cloud DB.</div>
       </div>
     </div>
 
@@ -94,25 +99,33 @@
                 <label>Password</label>
                 <div class="passWrap">
                   <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" />
-                  <button type="button" class="eyeToggleBtn" data-target="loginPass" aria-label="Toggle password visibility">
-                    <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <button type="button" class="eyeToggleBtn" data-target="loginPass"
+                    aria-label="Toggle password visibility">
+                    <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                       <circle cx="12" cy="12" r="3"></circle>
                     </svg>
-                    <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                    <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path
+                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24">
+                      </path>
                       <line x1="1" y1="1" x2="23" y2="23"></line>
                     </svg>
                   </button>
                 </div>
               </div>
 
-              <div class="row between" style="margin-top:-2px">
-                <span class="hint">Secure login with SHA-256</span>
+              <div style="display:flex; justify-content:flex-end; margin-top:-2px;">
                 <button type="button" id="forgotPassLink" class="linkBtn">Forgot Password?</button>
               </div>
 
-              <button id="loginBtn" class="btn" type="button" style="margin-top:6px">Login to Portal</button>
+              <div id="loginMsg"
+                style="display:none; font-size:12.5px; color:#dc2626; margin-top:8px; font-weight:600;"></div>
+
+              <button id="loginBtn" class="btn" type="button" style="margin-top:6px"
+                onclick="window.login ? window.login() : null">Login to Portal</button>
             </div>
           </div>
 
@@ -136,13 +149,18 @@
                   <label>Password * (min 6 characters)</label>
                   <div class="passWrap">
                     <input id="rPass" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
-                    <button type="button" class="eyeToggleBtn" data-target="rPass" aria-label="Toggle password visibility">
-                      <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button type="button" class="eyeToggleBtn" data-target="rPass"
+                      aria-label="Toggle password visibility">
+                      <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                         <circle cx="12" cy="12" r="3"></circle>
                       </svg>
-                      <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                      <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path
+                          d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24">
+                        </path>
                         <line x1="1" y1="1" x2="23" y2="23"></line>
                       </svg>
                     </button>
@@ -242,11 +260,12 @@
           <div class="card">
             <div class="cardTitle">Available Trainings</div>
             <div class="row between" style="margin-bottom:12px">
-              <div class="muted">Only Published/Completed trainings are visible</div>
+              <div class="muted">Only Published trainings are visible</div>
               <select id="wCatFilter" class="smallSelect">
                 <option value="">All Categories</option>
                 <option>Maternal Health</option>
                 <option>Child Health</option>
+                <option>Child Nutrition</option>
                 <option>Immunization</option>
                 <option>NCD</option>
                 <option>TB</option>
@@ -268,8 +287,8 @@
               </div>
 
               <div class="row gap">
-                <button id="takePreBtn" class="btn" type="button">Take Pre-Test</button>
-                <button id="takePostBtn" class="btn" type="button">Take Post-Test</button>
+                <button id="takePreBtn" class="btn" type="button" disabled>📝 Take Pre-Test</button>
+                <button id="takePostBtn" class="btn" type="button" disabled>🔒 Take Post-Test (Locked)</button>
               </div>
             </div>
 
@@ -292,6 +311,7 @@
                     <option value="">All Categories</option>
                     <option>Maternal Health</option>
                     <option>Child Health</option>
+                    <option>Child Nutrition</option>
                     <option>Immunization</option>
                     <option>NCD</option>
                     <option>TB</option>
@@ -319,7 +339,8 @@
               <div class="field">
                 <label>Worker Monitoring — Training Filter</label>
                 <select id="admTrainingPick"></select>
-                <div class="hint">Select a training to view workers who attempted PRE/POST for that specific training.</div>
+                <div class="hint">Select a training to view workers who attempted PRE/POST for that specific training.
+                </div>
               </div>
               <div class="field">
                 <label>Search Worker (Name / Phone / ID)</label>
@@ -342,6 +363,7 @@
                   <select id="tCategory">
                     <option>Maternal Health</option>
                     <option>Child Health</option>
+                    <option>Child Nutrition</option>
                     <option>Immunization</option>
                     <option>NCD</option>
                     <option>TB</option>
@@ -454,7 +476,8 @@
     </main>
 
     <!-- FORGOT / RESET PASSWORD MODAL -->
-    <div id="forgotModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="forgotModalTitle">
+    <div id="forgotModal" class="modalOverlay hidden" role="dialog" aria-modal="true"
+      aria-labelledby="forgotModalTitle">
       <div class="modalDialog">
         <div class="modalHead">
           <div id="forgotModalTitle" class="modalTitle">Reset Portal Password</div>
@@ -463,7 +486,8 @@
 
         <div class="form">
           <p class="muted" style="margin-top:0">
-            Verify your registered identity to reset your access password. Please enter your registered 10-digit phone number along with your district or registered email.
+            Verify your registered identity to reset your access password. Please enter your registered 10-digit phone
+            number along with your district or registered email.
           </p>
 
           <div class="field">
@@ -485,14 +509,20 @@
           <div class="field">
             <label>New Password * (min 6 characters)</label>
             <div class="passWrap">
-              <input id="resetNewPass" type="password" placeholder="New password (min 6 chars)" autocomplete="new-password" />
-              <button type="button" class="eyeToggleBtn" data-target="resetNewPass" aria-label="Toggle password visibility">
-                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <input id="resetNewPass" type="password" placeholder="New password (min 6 chars)"
+                autocomplete="new-password" />
+              <button type="button" class="eyeToggleBtn" data-target="resetNewPass"
+                aria-label="Toggle password visibility">
+                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
                 </svg>
-                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24">
+                  </path>
                   <line x1="1" y1="1" x2="23" y2="23"></line>
                 </svg>
               </button>
@@ -502,14 +532,20 @@
           <div class="field">
             <label>Confirm New Password *</label>
             <div class="passWrap">
-              <input id="resetConfirmPass" type="password" placeholder="Confirm new password" autocomplete="new-password" />
-              <button type="button" class="eyeToggleBtn" data-target="resetConfirmPass" aria-label="Toggle password visibility">
-                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <input id="resetConfirmPass" type="password" placeholder="Confirm new password"
+                autocomplete="new-password" />
+              <button type="button" class="eyeToggleBtn" data-target="resetConfirmPass"
+                aria-label="Toggle password visibility">
+                <svg class="eyeIcon show" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
                 </svg>
-                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <svg class="eyeIcon hide hidden" viewBox="0 0 24 24" width="18" height="18" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24">
+                  </path>
                   <line x1="1" y1="1" x2="23" y2="23"></line>
                 </svg>
               </button>
@@ -538,7 +574,8 @@
               </svg>
               Print / Save PDF
             </button>
-            <button id="closeCertModalBtn" class="closeBtn" type="button" aria-label="Close certificate">&times;</button>
+            <button id="closeCertModalBtn" class="closeBtn" type="button"
+              aria-label="Close certificate">&times;</button>
           </div>
         </div>
 
@@ -554,7 +591,8 @@
     <!-- FOOTER -->
     <footer class="footer">
       <div class="muted">
-        Government of Jharkhand • Department of Health, Medical Education & Family Welfare • National Health Mission (NHM)
+        Government of Jharkhand • Department of Health, Medical Education & Family Welfare • National Health Mission
+        (NHM)
       </div>
     </footer>
   </div>
@@ -562,4 +600,5 @@
   <script src="./static/js/app.js"></script>
   <script src="./script.js"></script>
 </body>
+
 </html>

@@ -1,8 +1,30 @@
 (() => {
   "use strict";
 
-  const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyWrPzgeQi2IuxA-0ibEjTzS1ravrl66TdC8OAsxfdVYcAKCmpC95xaHmnpF7mzUcmK/exec";
+  const GOOGLE_SCRIPT_URL = "";
   const PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1";
+  const API_STORAGE_KEY = "jh_backend_api_url";
+
+  function getApiBaseUrl() {
+    try {
+      const custom = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
+      if (custom) return custom.replace(/\/+$/, "");
+    } catch (_) {}
+
+    if (window.location.port === "5000" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return "";
+    }
+
+    return "";
+  }
+
+  function apiUrl(endpoint) {
+    const base = getApiBaseUrl();
+    const cleanPath = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
+    return base ? (base + cleanPath) : cleanPath;
+  }
+
+  window.apiUrl = apiUrl;
 
   /* ==========================
      UTILITIES
@@ -262,7 +284,7 @@
         list.innerHTML = `
           <div class="item">
             <div class="t">Offline Queue Empty</div>
-            <div class="s">All local actions are synchronized with Google Sheets.</div>
+            <div class="s">All local actions are synchronized with Aiven Enterprise Cloud DB.</div>
           </div>
         `;
       } else {
@@ -286,7 +308,7 @@
   }
 
   /* ==========================
-     GOOGLE APPS SCRIPT SYNC
+     AIVEN ENTERPRISE DATABASE SYNC
      ========================== */
   function setSyncStatus(status, message = "") {
     LS.set(DBK.lastSyncStatus, {
@@ -297,72 +319,30 @@
   }
 
   async function sendToSheet(payload, isFromQueue = false) {
-    // 1. PRIMARY FAST WRITE TO MYSQL (< 5ms response time)
-    try {
-      const apiRes = await fetch("/api/events/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (apiRes.ok) {
-        const json = await apiRes.json();
-        LS.set(DBK.lastSync, nowIso());
-        setSyncStatus("success", `Synced with MySQL Primary (${json.latency_ms || "1"}ms)`);
-        return json;
-      }
-    } catch (apiErr) {
-      console.debug("Local MySQL API call failed, falling back to direct sheets / queue:", apiErr);
-    }
-
-    // 2. FALLBACK TO DIRECT GOOGLE APPS SCRIPT IF BACKEND IS OFFLINE
-    if (!GOOGLE_SCRIPT_URL || GOOGLE_SCRIPT_URL.includes("PASTE_")) {
-      setSyncStatus("not_configured", "Apps Script URL not configured");
-      return { ok: false, error: "Apps Script URL not configured" };
-    }
-
-    if (!navigator.onLine) {
-      if (!isFromQueue) {
-        addToQueue(payload);
-        setSyncStatus("offline_queued", "Device is offline: queued for background sync");
-      }
-      return { ok: false, queued: true, error: "Device is offline" };
-    }
-
-    try {
-      const res = await fetch(GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const txt = await res.text();
-      let parsed;
+    // 1. PRIMARY FAST WRITE TO AIVEN POSTGRESQL (< 5ms response time)
+    if (navigator.onLine) {
       try {
-        parsed = JSON.parse(txt);
-      } catch {
-        parsed = { ok: false, error: "Invalid JSON response from Apps Script", raw: txt };
+        const apiRes = await fetch(apiUrl("/api/events/log"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          LS.set(DBK.lastSync, nowIso());
+          setSyncStatus("success", `Synced with Aiven Enterprise Database (${json.latency_ms || "1"}ms)`);
+          return json;
+        }
+      } catch (apiErr) {
+        console.debug("Aiven API call failed, queuing action for retry:", apiErr);
       }
-
-      if (parsed && parsed.ok) {
-        LS.set(DBK.lastSync, nowIso());
-        setSyncStatus("success", "Last sync successful");
-      } else {
-        const errMsg = parsed?.error || "Unknown Apps Script response error";
-        setSyncStatus("error", errMsg);
-      }
-
-      return parsed;
-    } catch (err) {
-      const errMsg = String(err);
-      if (!isFromQueue) {
-        addToQueue(payload);
-        setSyncStatus("network_queued", "Network failed: queued for sync");
-      }
-      console.warn("Sheets sync warning:", err);
-      return { ok: false, queued: true, error: errMsg };
     }
+
+    if (!isFromQueue) {
+      addToQueue(payload);
+      setSyncStatus("offline_queued", "Offline or network issue: queued for Aiven cloud sync");
+    }
+    return { ok: false, queued: true, error: "Queued for sync" };
   }
 
   async function processOfflineQueue() {
@@ -373,17 +353,25 @@
 
     const queue = getQueue();
     if (!queue.length) {
-      const ping = await sendToSheet({ type: "manual_ping", timestamp: nowIso() }, true);
-      if (ping && ping.ok) {
-        showToast("Connected to Google Sheets (Sync OK)", "success");
-      } else {
-        showToast("Connected, but Google Sheet responded with warning", "warn");
+      try {
+        const pingRes = await fetch(apiUrl("/api/health"));
+        if (pingRes.ok) {
+          showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
+        } else {
+          showToast("Aiven Enterprise Database reachable with notice", "warn");
+        }
+      } catch (err) {
+        if (window.location.hostname.endsWith("github.io") && !getApiBaseUrl()) {
+          showToast("GitHub Pages static mode: Click 'API Server' to connect your live cloud database", "info", 5000);
+        } else {
+          showToast("Backend database connection offline", "warn");
+        }
       }
       refreshQueueUI();
       return;
     }
 
-    showToast(`Syncing ${queue.length} offline action(s)...`, "info");
+    showToast(`Syncing ${queue.length} offline action(s) to Aiven Cloud DB...`, "info");
     setSyncStatus("syncing", `Syncing ${queue.length} queued action(s)...`);
 
     const remaining = [];
@@ -409,7 +397,7 @@
     refreshQueueUI();
 
     if (remaining.length === 0) {
-      showToast(`All ${syncedCount} queued action(s) synced successfully!`, "success");
+      showToast(`All ${syncedCount} queued action(s) synced to Aiven Cloud DB!`, "success");
     } else {
       showToast(`Synced ${syncedCount} item(s). ${remaining.length} item(s) remain queued.`, "warn");
     }
@@ -531,7 +519,8 @@
      SEED INITIAL USERS (ADMIN & 3 MASTER WORKERS)
      ========================== */
   async function seedInitialUsers() {
-    const users = LS.get(DBK.users, []);
+    let users = LS.get(DBK.users, []);
+    if (!Array.isArray(users)) users = [];
     const adminHash = await hashPassword("Admin@123");
     const workerHash = await hashPassword("Worker@123");
 
@@ -567,6 +556,42 @@
           facilityName: "ratu",
           facilityType: "Other",
           cityOrVillage: "ratu",
+          districtId: "D-20",
+          district: "Ranchi",
+          state: "Jharkhand"
+        }
+      },
+      {
+        id: "c22d679c-206b-4416-9fe1-141f967b26d8",
+        workerUniqueId: "JH176550",
+        phone: "9090909090",
+        password: workerHash,
+        role: ROLES.WORKER,
+        fullName: "akshat",
+        createdAt: nowIso(),
+        profile: {
+          designation: "ANM",
+          facilityName: "CHC Ormanjhi",
+          facilityType: "CHC",
+          cityOrVillage: "Ranchi",
+          districtId: "D-20",
+          district: "Ranchi",
+          state: "Jharkhand"
+        }
+      },
+      {
+        id: "e547834b-1166-4e49-810c-75dc6b2af273",
+        workerUniqueId: "JH782494",
+        phone: "9431590185",
+        password: workerHash,
+        role: ROLES.WORKER,
+        fullName: "Daymand",
+        createdAt: nowIso(),
+        profile: {
+          designation: "CHO",
+          facilityName: "CHC Namkum",
+          facilityType: "CHC",
+          cityOrVillage: "Namkum",
           districtId: "D-20",
           district: "Ranchi",
           state: "Jharkhand"
@@ -676,94 +701,161 @@
   /* ==========================
      AUTHENTICATION & LOGIN
      ========================== */
-  async function login() {
-    const phone = (byId("loginPhone")?.value || "").trim();
-    const password = (byId("loginPass")?.value || "").trim();
-
-    if (!phone) return showToast("Enter your registered Phone Number or Worker ID", "warn");
-    if (!password) return showToast("Enter your password", "warn");
-
-    const inputHash = await hashPassword(password);
-
-    // 1. PRIMARY FAST AUTHENTICATION AGAINST MYSQL (< 2ms)
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, password })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === "success" && data.user) {
-          const u = data.user;
-          const users = LS.get(DBK.users, []);
-          const idx = users.findIndex((x) => x.id === u.id || x.phone === u.phone || x.workerUniqueId === u.worker_unique_id);
-          const cachedUser = {
-            id: u.id,
-            role: u.role,
-            phone: u.phone,
-            password: inputHash,
-            workerUniqueId: u.worker_unique_id || u.workerUniqueId,
-            fullName: u.full_name || u.fullName,
-            createdAt: u.created_at || nowIso(),
-            profile: {
-              designation: u.designation || "",
-              facilityName: u.facility_name || "",
-              facilityType: u.facility_type || "",
-              cityOrVillage: u.city_or_village || "",
-              districtId: u.district_id || "",
-              district: u.district_name || "",
-              state: u.state || "Jharkhand"
-            }
-          };
-          if (idx >= 0) users[idx] = cachedUser;
-          else users.push(cachedUser);
-          LS.set(DBK.users, users);
-
-          setSession(u.id);
-          showToast(`Welcome back, ${cachedUser.fullName}! (${data.latency_ms || "1"}ms)`, "success");
-          renderAll();
-          routeAfterLogin();
-          return;
-        }
-      } else {
-        const err = await res.json().catch(() => ({}));
-        if (err.requires_reset) {
-          openForgotModal();
-          const rPhoneInput = byId("resetPhone");
-          if (rPhoneInput) rPhoneInput.value = phone;
-          if (err.district && byId("resetDistrict")) {
-            byId("resetDistrict").value = err.district;
-          }
-          return showToast(err.message, "warn");
-        }
-        if (err.message) return showToast(err.message, "error");
-      }
-    } catch (apiErr) {
-      console.warn("Backend auth offline, checking local cache:", apiErr);
-    }
-
-    // 2. OFFLINE LOCAL CACHE FALLBACK
-    const users = LS.get(DBK.users, []);
-    const u = users.find(
-      (x) =>
-        (x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
-        (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123") || (x.role === ROLES.WORKER && (password === "Worker@123" || password === "Admin@123")))
-    );
-    if (!u) return showToast("Invalid phone number / worker ID or password", "error");
-
-    if (u.password !== inputHash) {
-      u.password = inputHash;
-      LS.set(DBK.users, users);
-    }
-
-    setSession(u.id);
-    showToast(`Welcome back, ${u.fullName}! (Offline mode)`, "success");
-    logEvent("login", { phone: u.phone, workerUniqueId: u.workerUniqueId });
-
-    renderAll();
-    routeAfterLogin();
+  function showLoginMsg(msg, isError = true) {
+    const el = byId("loginMsg");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isError ? "#dc2626" : "#16a34a";
+    el.style.display = msg ? "block" : "none";
   }
+
+  async function login() {
+    showLoginMsg("");
+    const phoneInput = byId("loginPhone");
+    const passInput = byId("loginPass");
+    const btn = byId("loginBtn");
+
+    const phone = (phoneInput?.value || "").trim();
+    const password = (passInput?.value || "").trim();
+
+    if (!phone) {
+      phoneInput?.focus();
+      showLoginMsg("Please enter your registered Phone Number or Worker ID");
+      return showToast("Enter your registered Phone Number or Worker ID", "warn");
+    }
+    if (!password) {
+      passInput?.focus();
+      showLoginMsg("Please enter your password (default: Worker@123 or Admin@123)");
+      return showToast("Enter your password", "warn");
+    }
+
+    const origText = btn ? btn.innerHTML : "Login to Portal";
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px">⏳</span> Signing in...`;
+    }
+
+    try {
+      const inputHash = await hashPassword(password);
+
+      // 1. PRIMARY FAST AUTHENTICATION AGAINST MYSQL (< 2ms)
+      try {
+        const res = await fetch(apiUrl("/api/auth/login"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone, password })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "success" && data.user) {
+            const u = data.user;
+            const users = LS.get(DBK.users, []);
+            const idx = users.findIndex((x) => x.id === u.id || x.phone === u.phone || x.workerUniqueId === u.worker_unique_id);
+            const cachedUser = {
+              id: u.id,
+              role: u.role,
+              phone: u.phone,
+              password: inputHash,
+              workerUniqueId: u.worker_unique_id || u.workerUniqueId,
+              fullName: u.full_name || u.fullName,
+              createdAt: u.created_at || nowIso(),
+              profile: {
+                designation: u.designation || "",
+                facilityName: u.facility_name || "",
+                facilityType: u.facility_type || "",
+                cityOrVillage: u.city_or_village || "",
+                districtId: u.district_id || "",
+                district: u.district_name || "",
+                state: u.state || "Jharkhand"
+              }
+            };
+            if (idx >= 0) users[idx] = cachedUser;
+            else users.push(cachedUser);
+            LS.set(DBK.users, users);
+
+            setSession(u.id);
+            showToast(`Welcome back, ${cachedUser.fullName}! (${data.latency_ms || "1"}ms)`, "success");
+            renderAll();
+            routeAfterLogin();
+            return;
+          }
+        } else if (res.status === 400 || res.status === 401) {
+          const err = await res.json().catch(() => ({}));
+          if (err.requires_reset) {
+            openForgotModal();
+            const rPhoneInput = byId("resetPhone");
+            if (rPhoneInput) rPhoneInput.value = phone;
+            if (err.district && byId("resetDistrict")) {
+              byId("resetDistrict").value = err.district;
+            }
+            showLoginMsg(err.message || "Password reset required");
+            return showToast(err.message, "warn");
+          }
+          if (err.message) {
+            showLoginMsg(err.message);
+            return showToast(err.message, "error");
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Backend auth offline, checking local cache:", apiErr);
+      }
+
+      // 2. OFFLINE LOCAL CACHE FALLBACK
+      const users = LS.get(DBK.users, []);
+      const u = users.find(
+        (x) =>
+          (x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
+          (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123") || (x.role === ROLES.WORKER && (password === "Worker@123" || password === "Admin@123")))
+      );
+      if (!u) {
+        showLoginMsg("Invalid phone number / worker ID or password");
+        return showToast("Invalid phone number / worker ID or password", "error");
+      }
+
+      if (u.password !== inputHash) {
+        u.password = inputHash;
+        LS.set(DBK.users, users);
+      }
+
+      setSession(u.id);
+      showToast(`Welcome back, ${u.fullName}! (Offline mode)`, "success");
+      logEvent("login", { phone: u.phone, workerUniqueId: u.workerUniqueId });
+
+      renderAll();
+      routeAfterLogin();
+    } catch (e) {
+      console.error("Login execution error:", e);
+      showLoginMsg("Login error: " + (e.message || "Unknown error"));
+      showToast("Login error: " + (e.message || "Unknown error"), "error");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  function quickWorkerLogin() {
+    const p = byId("loginPhone");
+    const pass = byId("loginPass");
+    if (p) p.value = "7004369523";
+    if (pass) pass.value = "Worker@123";
+    login();
+  }
+
+  function quickAdminLogin() {
+    const p = byId("loginPhone");
+    const pass = byId("loginPass");
+    if (p) p.value = "9999999999";
+    if (pass) pass.value = "Admin@123";
+    login();
+  }
+
+  window.login = login;
+  window.quickWorkerLogin = quickWorkerLogin;
+  window.quickAdminLogin = quickAdminLogin;
+  window.logout = logout;
+  window.registerWorker = registerWorker;
 
   async function logout() {
     const u = currentUser();
@@ -810,7 +902,7 @@
 
     // 1. PRIMARY FAST REGISTRATION IN MYSQL (< 5ms)
     try {
-      const res = await fetch("/api/auth/register", {
+      const res = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -855,12 +947,12 @@
           users.push(cachedUser);
           LS.set(DBK.users, users);
           setSession(u.id);
-          showToast(`Registration successful! Saved in MySQL Primary (${data.latency_ms || "3"}ms)`, "success");
+          showToast(`Registration successful! Saved in Aiven Enterprise DB (${data.latency_ms || "3"}ms)`, "success");
           renderAll();
           routeAfterLogin();
           return;
         }
-      } else {
+      } else if (res.status === 400 || res.status === 409) {
         const err = await res.json().catch(() => ({}));
         if (err.message) return showToast(err.message, "error");
       }
@@ -962,7 +1054,7 @@
 
     // Primary write to MySQL users table
     try {
-      await fetch("/api/auth/reset-password", {
+      await fetch(apiUrl("/api/auth/reset-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1070,10 +1162,15 @@
   /* ==========================
      TRAININGS (WORKER)
      ========================== */
+  function isPublishedTraining(t) {
+    if (!t) return false;
+    const s = String(t.status || "").trim().toLowerCase();
+    return s === "published" || s === "completed";
+  }
+
   function trainingsVisibleToWorker() {
     const cat = byId("wCatFilter") ? byId("wCatFilter").value || "" : "";
-    const allowed = ["Published", "Completed"];
-    let list = LS.get(DBK.trainings, []).filter((t) => allowed.includes(t.status));
+    let list = LS.get(DBK.trainings, []).filter(isPublishedTraining);
     if (cat) list = list.filter((t) => t.category === cat);
     return list;
   }
@@ -1090,8 +1187,27 @@
   }
 
   function attendanceFor(trainingId, userId) {
+    const user = currentUser();
     const rows = getAttendance()
-      .filter((a) => a.trainingId === trainingId && a.userId === userId)
+      .filter((a) => {
+        const matchesUser = (
+          a.userId === userId ||
+          a.workerUniqueId === userId ||
+          (user && (
+            a.userId === user.id ||
+            a.userId === user.workerUniqueId ||
+            a.userId === user.phone ||
+            a.workerUniqueId === user.workerUniqueId ||
+            a.workerUniqueId === user.id
+          ))
+        );
+        if (!matchesUser) return false;
+        if (a.trainingId === trainingId || a.trainingTitle === trainingId) return true;
+        const trainings = LS.get(DBK.trainings, []);
+        const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
+        if (t && (a.trainingId === t.id || a.trainingId === t.title)) return true;
+        return false;
+      })
       .sort((a, b) => new Date(b.checkedInAt || 0) - new Date(a.checkedInAt || 0));
     return rows[0] || null;
   }
@@ -1151,7 +1267,7 @@
     const fName = user.fullName || user.full_name || "";
 
     // Direct Primary write to MySQL attendance table
-    fetch("/api/attendance", {
+    fetch(apiUrl("/api/attendance"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1202,9 +1318,33 @@
   }
 
   function latestAttempt(trainingId, userId, type) {
+    const user = currentUser();
+    const typeUpper = (type || "").toUpperCase();
     const atts = getAttempts()
-      .filter((a) => a.trainingId === trainingId && a.userId === userId && a.type === type)
-      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+      .filter((a) => {
+        const aType = (a.type || a.test_type || "").toUpperCase();
+        if (aType !== typeUpper) return false;
+
+        const matchesUser = (
+          a.userId === userId ||
+          a.workerUniqueId === userId ||
+          (user && (
+            a.userId === user.id ||
+            a.userId === user.workerUniqueId ||
+            a.userId === user.phone ||
+            a.workerUniqueId === user.workerUniqueId ||
+            a.workerUniqueId === user.id
+          ))
+        );
+        if (!matchesUser) return false;
+
+        if (a.trainingId === trainingId || a.trainingTitle === trainingId) return true;
+        const trainings = LS.get(DBK.trainings, []);
+        const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
+        if (t && (a.trainingId === t.id || a.trainingId === t.title || a.trainingTitle === t.title)) return true;
+        return false;
+      })
+      .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
     return atts[0] || null;
   }
 
@@ -1212,7 +1352,19 @@
     return !!latestAttempt(trainingId, userId, type);
   }
 
+  function canTakePre(trainingId, userId) {
+    const trainings = LS.get(DBK.trainings, []);
+    const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
+    if (!t || !isPublishedTraining(t)) return false;
+    if (!t.attendanceEnabled) return true;
+    const att = attendanceFor(t.id, userId);
+    return !!(att && (att.attendanceStatus === "Present" || att.status === "Present"));
+  }
+
   function canTakePost(trainingId, userId) {
+    const trainings = LS.get(DBK.trainings, []);
+    const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
+    if (!t || !isPublishedTraining(t)) return false;
     return !!latestAttempt(trainingId, userId, "PRE");
   }
 
@@ -1223,7 +1375,40 @@
     return type === "PRE" ? JSON.parse(defaultPreJson()) : JSON.parse(defaultPostJson());
   }
 
+  let activeTestStartTime = 0;
+
   function renderTestUI(trainingId, type, questions) {
+    const user = currentUser();
+    if (!user || user.role !== ROLES.WORKER) return showToast("Worker access only", "warn");
+
+    const tRecord = LS.get(DBK.trainings, []).find((x) => x.id === trainingId);
+    if (tRecord && !isPublishedTraining(tRecord)) {
+      showToast("Access Denied: This training is currently in Draft status and not published.", "warn");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
+    // STRICT ATTENDANCE RESTRICTION: Pre-Test is strictly locked if Attendance is not submitted
+    if (type === "PRE" && !canTakePre(trainingId, user.id)) {
+      showToast("Access Denied: Pre-Test is strictly locked! You must mark attendance for this training first.", "error");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
+    // STRICT PRE-TEST RESTRICTION: Post-Test is locked if Pre-Test is not submitted
+    if (type === "POST" && !canTakePost(trainingId, user.id)) {
+      showToast("Access Denied: Post-Test is strictly locked! You must complete and submit the Pre-Test first.", "error");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
+    if (hasSubmitted(trainingId, user.id, type)) {
+      showToast(`${type} test has already been completed and is locked.`, "info");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
+    activeTestStartTime = Date.now();
     const panel = byId("testPanel");
     if (!panel) return;
     panel.classList.remove("hidden");
@@ -1277,10 +1462,43 @@
     const user = currentUser();
     if (!user || user.role !== ROLES.WORKER) return showToast("Worker access only", "warn");
 
+    // STRICT ATTENDANCE RESTRICTION: Reject any Pre-Test attempt if Attendance is missing
+    if (type === "PRE" && !canTakePre(trainingId, user.id)) {
+      showToast("Submission rejected: Pre-Test is locked! You must mark attendance first.", "error");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
+    // STRICT PRE-TEST RESTRICTION: Reject any Post-Test attempt if Pre-Test is missing
+    if (type === "POST" && !canTakePost(trainingId, user.id)) {
+      showToast("Submission rejected: Post-Test is locked! You must complete and submit the Pre-Test first.", "error");
+      byId("testPanel")?.classList.add("hidden");
+      return;
+    }
+
     if (hasSubmitted(trainingId, user.id, type)) {
       return showToast(`${type} test has already been submitted and is locked.`, "warn");
     }
 
+    // STRICT ATTEMPT CEILING: Post-test attempts cannot exceed pre-test attempts
+    if (type === "POST") {
+      const attsAll = getAttempts();
+      const userPreCount = attsAll.filter((a) => 
+        (a.type || "").toUpperCase() === "PRE" && 
+        (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+      ).length;
+      const userPostCount = attsAll.filter((a) => 
+        (a.type || "").toUpperCase() === "POST" && 
+        (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+      ).length;
+      if (userPostCount >= userPreCount) {
+        showToast("Rule Enforced: Post-Test attempts cannot exceed Pre-Test attempts.", "error");
+        byId("testPanel")?.classList.add("hidden");
+        return;
+      }
+    }
+
+    const t = LS.get(DBK.trainings, []).find((x) => x.id === trainingId);
     let score = 0;
     const totalMarks = questions.reduce((s, q) => s + Number(q.marks || 1), 0);
 
@@ -1302,7 +1520,9 @@
     atts.push({
       id: uuid(),
       trainingId,
+      trainingTitle: t ? t.title : "",
       userId: user.id,
+      workerUniqueId: user.workerUniqueId || "",
       type,
       score,
       totalMarks,
@@ -1312,7 +1532,6 @@
     });
     saveAttempts(atts);
 
-    const t = LS.get(DBK.trainings, []).find((x) => x.id === trainingId);
     const passText = passed ? "Passed (≥ 60%)" : "Needs Improvement (< 60%)";
     showToast(`${type} Submitted! Score: ${score}/${totalMarks} (${percent}%) • ${passText}`, passed ? "success" : "warn");
 
@@ -1331,24 +1550,43 @@
       showToast("Assessment recorded locally. Sync queued.", "info");
     }
 
-    // Trigger Flask AI Adaptive Learning Engine asynchronously (TASK A -> TASK B)
+    // Submit BOTH PRE and POST tests to Flask Backend / MySQL Primary
     try {
-      const preAttempt = latestAttempt(trainingId, user.id, "PRE");
-      fetch("/api/submit-assessment", {
+      const timeSpentSeconds = activeTestStartTime
+        ? Math.max(15, Math.round((Date.now() - activeTestStartTime) / 1000))
+        : 180;
+      const preAttempt = type === "POST" ? latestAttempt(trainingId, user.id, "PRE") : null;
+
+      const res = await fetch(apiUrl("/api/submit-assessment"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          trainingId: trainingId,
+          training_id: trainingId,
           user_id: user.workerUniqueId || user.phone || user.id,
           module_name: t ? t.title : "Clinical Module",
-          pre_test_score: preAttempt ? preAttempt.percent : percent,
-          post_test_score: percent,
-          time_spent_seconds: 180
+          test_type: type.toLowerCase(),
+          type: type.toLowerCase(),
+          score: score,
+          total_marks: totalMarks,
+          totalMarks: totalMarks,
+          percent: percent,
+          pre_test_score: preAttempt ? preAttempt.percent : (type === "PRE" ? percent : 0),
+          post_test_score: type === "POST" ? percent : 0,
+          time_spent_seconds: timeSpentSeconds
         })
-      }).then(() => {
-        if (window.onUserAuthorized) {
-          setTimeout(() => window.onUserAuthorized(user.workerUniqueId || user.phone || user.id), 1200);
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        if (errJson.message) {
+          showToast(errJson.message, "warn");
         }
-      }).catch(() => {});
+      } else {
+        if (type === "POST" && window.onUserAuthorized) {
+          setTimeout(() => window.onUserAuthorized(user.workerUniqueId || user.phone || user.id, true), 800);
+        }
+      }
     } catch (_) {}
 
     byId("testPanel")?.classList.add("hidden");
@@ -1364,7 +1602,7 @@
 
     const trainings = LS.get(DBK.trainings, []);
     const t = trainings.find((x) => x.id === trainingId);
-    if (!t) return showToast("Training record not found", "error");
+    if (!t || !isPublishedTraining(t)) return showToast("Training record not found or not published", "error");
 
     const att = attendanceFor(trainingId, user.id);
     const post = latestAttempt(trainingId, user.id, "POST");
@@ -1479,21 +1717,148 @@
       return;
     }
 
-    const atts = LS.get(DBK.attempts, []).filter((a) => a.userId === user.id);
-    const attendances = LS.get(DBK.attendance, []).filter((a) => a.userId === user.id && a.attendanceStatus === "Present");
-    const pre = atts.filter((a) => a.type === "PRE");
-    const post = atts.filter((a) => a.type === "POST");
-    const sum = (arr, k) => arr.reduce((s, x) => s + Number(x[k] || 0), 0);
+    // Restrict Draft trainings: Workers can only see Published trainings
+    const trainings = LS.get(DBK.trainings, []).filter(isPublishedTraining);
+    const atts = LS.get(DBK.attempts, []).filter((a) => {
+      return (
+        a.userId === user.id ||
+        a.userId === user.workerUniqueId ||
+        a.userId === user.phone ||
+        a.workerUniqueId === user.workerUniqueId ||
+        a.workerUniqueId === user.id
+      );
+    });
+    const attendances = LS.get(DBK.attendance, []).filter((a) => {
+      const isUser = (
+        a.userId === user.id ||
+        a.userId === user.workerUniqueId ||
+        a.userId === user.phone ||
+        a.workerUniqueId === user.workerUniqueId ||
+        a.workerUniqueId === user.id
+      );
+      return isUser && a.attendanceStatus === "Present";
+    });
 
-    const trainings = LS.get(DBK.trainings, []);
+    // Deduplicate attempts by canonical trainingId so each training displays true latest assessment metrics
+    const latestPreMap = new Map();
+    atts.filter((a) => (a.type || a.test_type || "").toUpperCase() === "PRE").forEach((a) => {
+      const match = trainings.find((t) => t.id === a.trainingId || t.title === a.trainingId || t.title === a.trainingTitle);
+      const tid = match ? match.id : a.trainingId;
+      const qCount = match?.assessments?.pre?.length || 2;
+      let sc = Number(a.score != null ? a.score : 0);
+      let tm = Number(a.totalMarks || a.total_marks || qCount);
+      if (tm > 10 && qCount <= 10) {
+        sc = Math.round((Number(a.percent || 0) / 100) * qCount);
+        tm = qCount;
+      }
+      const prev = latestPreMap.get(tid);
+      if (!prev || new Date(a.submittedAt || 0) >= new Date(prev.submittedAt || 0)) {
+        latestPreMap.set(tid, { ...a, trainingId: tid, score: sc, totalMarks: tm });
+      }
+    });
+    const pre = Array.from(latestPreMap.values());
+
+    const latestPostMap = new Map();
+    atts.filter((a) => (a.type || a.test_type || "").toUpperCase() === "POST").forEach((a) => {
+      const match = trainings.find((t) => t.id === a.trainingId || t.title === a.trainingId || t.title === a.trainingTitle);
+      const tid = match ? match.id : a.trainingId;
+
+      // RULE ENFORCED: Post-test attempts CANNOT exist or be counted without a completed pre-test for that module
+      if (!latestPreMap.has(tid)) {
+        return;
+      }
+
+      const qCount = match?.assessments?.post?.length || 2;
+      let sc = Number(a.score != null ? a.score : 0);
+      let tm = Number(a.totalMarks || a.total_marks || qCount);
+      if (tm > 10 && qCount <= 10) {
+        sc = Math.round((Number(a.percent || 0) / 100) * qCount);
+        tm = qCount;
+      }
+      const prev = latestPostMap.get(tid);
+      if (!prev || new Date(a.submittedAt || 0) >= new Date(prev.submittedAt || 0)) {
+        latestPostMap.set(tid, { ...a, trainingId: tid, score: sc, totalMarks: tm });
+      }
+    });
+
+    // Enforce that post attempts count can NEVER exceed pre attempts count
+    const post = Array.from(latestPostMap.values()).slice(0, pre.length);
+
+    const sum = (arr, k) => arr.reduce((s, x) => s + Number(x[k] || 0), 0);
+    const preTotalSc = sum(pre, "score");
+    const preTotalTm = sum(pre, "totalMarks") || (pre.length ? pre.length * 2 : 0);
+    const prePct = preTotalTm > 0 ? Math.round((preTotalSc / preTotalTm) * 100) : 0;
+    const postTotalSc = sum(post, "score");
+    const postTotalTm = sum(post, "totalMarks") || (post.length ? post.length * 2 : 0);
+    const postPct = postTotalTm > 0 ? Math.round((postTotalSc / postTotalTm) * 100) : 0;
+
     const earnedCerts = [];
     trainings.forEach((t) => {
-      const isAtt = attendances.some((a) => a.trainingId === t.id);
+      const isAtt = attendances.some((a) => a.trainingId === t.id || a.trainingTitle === t.title);
       const postAtt = latestAttempt(t.id, user.id, "POST");
       if (isAtt && postAtt && (postAtt.passed || postAtt.percent >= 60)) {
         earnedCerts.push({ training: t, attempt: postAtt });
       }
     });
+
+    // Build module-by-module breakdown rows
+    const moduleRows = trainings.map((t) => {
+      const mPre = latestPreMap.get(t.id);
+      const mPost = latestPostMap.get(t.id);
+      const mAtt = attendances.some((a) => a.trainingId === t.id || a.trainingTitle === t.title);
+
+      const attStatus = mAtt 
+        ? `<span class="badge good" style="font-size:11px">✓ Present</span>`
+        : `<span class="badge warn" style="font-size:11px">Not Marked</span>`;
+
+      let preScoreText = `<span class="muted">Not taken</span>`;
+      if (mPre) {
+        preScoreText = `<b>${mPre.score}/${mPre.totalMarks} (${mPre.percent}%)</b> <span class="muted" style="font-size:10.5px">• 1 Attempt</span>`;
+      } else if (!mAtt && t.attendanceEnabled) {
+        preScoreText = `<span class="muted" style="font-size:11px">🔒 Locked (Attendance First)</span>`;
+      } else {
+        preScoreText = `<span class="badge warn" style="font-size:10.5px">Pending</span>`;
+      }
+
+      let postScoreText = `<span class="muted">Not taken</span>`;
+      if (mPost) {
+        const pColor = mPost.passed || mPost.percent >= 60 ? "#16a34a" : "#dc2626";
+        postScoreText = `<span style="font-weight:600;color:${pColor}">${mPost.score}/${mPost.totalMarks} (${mPost.percent}%)</span> <span class="muted" style="font-size:10.5px">• 1 Attempt</span>`;
+      } else if (!mPre) {
+        postScoreText = `<span class="muted" style="font-size:11px">🔒 Locked (Pre-Test First)</span>`;
+      } else {
+        postScoreText = `<span class="badge warn" style="font-size:10.5px">Ready to Take</span>`;
+      }
+
+      let outcomeBadge = `<span class="badge" style="background:#f1f5f9;color:#64748b;font-size:11px">Not Started</span>`;
+      if (mPost) {
+        if (mPost.passed || mPost.percent >= 60) {
+          outcomeBadge = `<span class="badge good" style="font-size:11px">✓ Passed (${mPost.percent}%)</span>`;
+        } else {
+          outcomeBadge = `<span class="badge bad" style="font-size:11px">Needs Improvement (${mPost.percent}%)</span>`;
+        }
+      } else if (mPre) {
+        outcomeBadge = `<span class="badge warn" style="font-size:11px">Pre-Test Done</span>`;
+      } else if (mAtt) {
+        outcomeBadge = `<span class="badge warn" style="font-size:11px">Attended</span>`;
+      }
+
+      return `
+        <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--border);align-items:flex-start;gap:10px">
+          <div style="flex:1;min-width:200px">
+            <div style="font-weight:600;font-size:13px;line-height:1.4">${t.title}</div>
+            <div style="font-size:12px;margin-top:4px;color:var(--text-muted,#475569);display:flex;flex-wrap:wrap;gap:12px">
+              <span>Attendance: ${attStatus}</span>
+              <span>Pre-Test: ${preScoreText}</span>
+              <span>Post-Test: ${postScoreText}</span>
+            </div>
+          </div>
+          <div style="text-align:right;white-space:nowrap">
+            ${outcomeBadge}
+          </div>
+        </div>
+      `;
+    }).join("");
 
     box.innerHTML = `
       <div class="item">
@@ -1506,11 +1871,48 @@
       </div>
 
       <div class="item">
-        <div class="t">Assessments & Attendance Summary</div>
+        <div class="t">Curriculum Progress & Assessment Summary</div>
         <div class="s">
-          Pre-Test Attempts: <b>${pre.length}</b> (Total Score: <b>${sum(pre, "score")}/${sum(pre, "totalMarks") || 0}</b>)<br/>
-          Post-Test Attempts: <b>${post.length}</b> (Total Score: <b>${sum(post, "score")}/${sum(post, "totalMarks") || 0}</b>)<br/>
-          Verified Attendance Sessions: <b>${attendances.length}</b>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;margin-top:6px;margin-bottom:10px">
+            <div style="background:var(--bg,#f8fafc);padding:10px;border-radius:6px;border:1px solid var(--border,#e2e8f0)">
+              <div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase">Modules Evaluated</div>
+              <div style="font-size:18px;font-weight:700;color:var(--text,#1e293b);margin-top:2px">
+                ${post.length} <span style="font-size:12px;font-weight:normal;color:#64748b">of ${trainings.length} Modules</span>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:2px">1 single attempt per module</div>
+            </div>
+
+            <div style="background:var(--bg,#f8fafc);padding:10px;border-radius:6px;border:1px solid var(--border,#e2e8f0)">
+              <div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase">Verified Attendance</div>
+              <div style="font-size:18px;font-weight:700;color:var(--text,#1e293b);margin-top:2px">
+                ${attendances.length} <span style="font-size:12px;font-weight:normal;color:#64748b">of ${trainings.length} Sessions</span>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:2px">Required before Pre-Test</div>
+            </div>
+
+            <div style="background:var(--bg,#f8fafc);padding:10px;border-radius:6px;border:1px solid var(--border,#e2e8f0)">
+              <div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase">Overall Pre-Test</div>
+              <div style="font-size:18px;font-weight:700;color:var(--text,#1e293b);margin-top:2px">
+                ${pre.length > 0 ? `${preTotalSc}/${preTotalTm}` : "0/0"} <span style="font-size:12px;font-weight:normal;color:#64748b">(${prePct}%)</span>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:2px">${pre.length} module${pre.length === 1 ? "" : "s"} evaluated</div>
+            </div>
+
+            <div style="background:var(--bg,#f8fafc);padding:10px;border-radius:6px;border:1px solid var(--border,#e2e8f0)">
+              <div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase">Overall Post-Test</div>
+              <div style="font-size:18px;font-weight:700;color:var(--text,#1e293b);margin-top:2px">
+                ${post.length > 0 ? `${postTotalSc}/${postTotalTm}` : "0/0"} <span style="font-size:12px;font-weight:normal;color:#64748b">(${postPct}%)</span>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:2px">${post.length} module${post.length === 1 ? "" : "s"} evaluated</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="item">
+        <div class="t">Module-by-Module Assessment Matrix (${pre.length} Evaluated)</div>
+        <div class="s" style="margin-top:4px">
+          ${moduleRows}
         </div>
       </div>
 
@@ -1535,6 +1937,10 @@
     box.querySelectorAll("[data-cert-dash]").forEach((btn) => {
       btn.addEventListener("click", () => openCertificate(btn.dataset.certDash));
     });
+
+    if (window.onUserAuthorized) {
+      window.onUserAuthorized(user.workerUniqueId || user.phone || user.id);
+    }
   }
 
   function renderWorkerTrainings() {
@@ -1549,7 +1955,7 @@
 
     const list = trainingsVisibleToWorker();
     if (!list.length) {
-      box.innerHTML = `<div class="item"><div class="t">No Published/Completed trainings found</div></div>`;
+      box.innerHTML = `<div class="item"><div class="t">No Published trainings found</div></div>`;
       return;
     }
 
@@ -1572,9 +1978,26 @@
         const canMark = !!t.attendanceEnabled && !att && inWindow;
         const btnText = att ? "Attendance Marked" : (inWindow ? "Mark Attendance" : "Attendance Closed");
 
-        const isAttended = att && att.attendanceStatus === "Present";
+        const isAttended = att && (att.attendanceStatus === "Present" || att.status === "Present");
+        const canTakePreTest = isAttended || !t.attendanceEnabled;
         const isPostPassed = post && (post.passed || post.percent >= 60);
         const eligibleForCert = isAttended && isPostPassed;
+
+        let preBadge = `<span class="badge" style="background:#f1f5f9;color:#64748b;font-size:11px">🔒 Locked (Mark Attendance First)</span>`;
+        if (pre) {
+          preBadge = `<span class="badge good" style="font-size:11px">✓ Completed: ${pre.score}/${pre.totalMarks} (${pre.percent}%)</span>`;
+        } else if (canTakePreTest) {
+          preBadge = `<span class="badge warn" style="font-size:11px">🔓 Ready to Take</span>`;
+        }
+
+        let postBadge = `<span class="badge" style="background:#f1f5f9;color:#64748b;font-size:11px">🔒 Locked (Complete Pre-Test First)</span>`;
+        if (post) {
+          const pCls = post.passed || post.percent >= 60 ? "good" : "bad";
+          const pTxt = post.passed || post.percent >= 60 ? "Passed" : "Needs Improvement";
+          postBadge = `<span class="badge ${pCls}" style="font-size:11px">${pTxt}: ${post.score}/${post.totalMarks} (${post.percent}%)</span>`;
+        } else if (pre) {
+          postBadge = `<span class="badge warn" style="font-size:11px">🔓 Ready to Take</span>`;
+        }
 
         return `
           <div class="item">
@@ -1586,13 +2009,26 @@
               Category: <b>${t.category}</b> &bull; Mode: <b>${t.mode}</b><br/>
               Schedule: <b>${fmt(t.startAt)}</b> to <b>${fmt(t.endAt)}</b><br/>
               Attendance: <b>${attText}</b><br/>
-              Pre-Test: <b>${pre ? `${pre.score}/${pre.totalMarks} (${pre.percent}%)` : "Pending"}</b><br/>
-              Post-Test: <b>${post ? `${post.score}/${post.totalMarks} (${post.percent}%)` : (pre ? "Pending" : "Locked (Complete Pre-Test)")}</b>
+              Pre-Test: ${preBadge}<br/>
+              Post-Test: ${postBadge}
             </div>
-            <div class="actions">
+            <div class="actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn small ${att ? "ghost" : ""}" type="button" data-att="${t.id}" ${canMark ? "" : "disabled"}>
                 ${btnText}
               </button>
+              ${!pre ? (canTakePreTest ? `
+                <button class="btn small" type="button" data-take-pre="${t.id}">
+                  📝 Take Pre-Test
+                </button>
+              ` : `
+                <button class="btn small ghost" type="button" disabled style="opacity:0.6;cursor:not-allowed" title="Mark attendance first to unlock Pre-Test">
+                  🔒 Pre-Test (Locked)
+                </button>
+              `) : (!post ? `
+                <button class="btn small" type="button" data-take-post="${t.id}">
+                  📝 Take Post-Test
+                </button>
+              ` : "")}
               ${eligibleForCert ? `
                 <button class="btn small success" type="button" data-cert="${t.id}">
                   🏆 View Certificate
@@ -1608,33 +2044,131 @@
       btn.addEventListener("click", () => markAttendance(btn.dataset.att));
     });
 
+    box.querySelectorAll("[data-take-pre]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tid = btn.dataset.takePre;
+        if (!canTakePre(tid, user.id)) {
+          return showToast("Pre-Test is locked! You must mark attendance first.", "error");
+        }
+        const sel = byId("testTrainingSelect");
+        if (sel) {
+          sel.value = tid;
+          updateTestButtonStates();
+        }
+        renderTestUI(tid, "PRE", getQuestions(tid, "PRE"));
+      });
+    });
+
+    box.querySelectorAll("[data-take-post]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tid = btn.dataset.takePost;
+        if (!canTakePost(tid, user.id)) {
+          return showToast("Post-Test is locked! Complete and submit Pre-Test first.", "error");
+        }
+        const attsAll = getAttempts();
+        const userPreCount = attsAll.filter((a) => 
+          (a.type || "").toUpperCase() === "PRE" && 
+          (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+        ).length;
+        const userPostCount = attsAll.filter((a) => 
+          (a.type || "").toUpperCase() === "POST" && 
+          (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+        ).length;
+        if (userPostCount >= userPreCount) {
+          return showToast("Rule Enforced: Post-Test attempts cannot exceed Pre-Test attempts.", "error");
+        }
+        const sel = byId("testTrainingSelect");
+        if (sel) {
+          sel.value = tid;
+          updateTestButtonStates();
+        }
+        renderTestUI(tid, "POST", getQuestions(tid, "POST"));
+      });
+    });
+
     box.querySelectorAll("[data-cert]").forEach((btn) => {
       btn.addEventListener("click", () => openCertificate(btn.dataset.cert));
     });
   }
 
-  function renderTestTrainingSelect() {
+  function updateTestButtonStates() {
     const sel = byId("testTrainingSelect");
     const note = byId("postGateNote");
+    const preBtn = byId("takePreBtn");
+    const postBtn = byId("takePostBtn");
     const user = currentUser();
-    if (!sel || !note) return;
+    if (!sel || !note || !preBtn || !postBtn) return;
+
+    const tid = sel.value;
+    if (!tid) {
+      preBtn.disabled = true;
+      postBtn.disabled = true;
+      note.innerHTML = `<span class="muted">Select a training above to start assessment.</span>`;
+      return;
+    }
+
+    if (!user || user.role !== ROLES.WORKER) {
+      preBtn.disabled = true;
+      postBtn.disabled = true;
+      note.textContent = "Worker login required.";
+      return;
+    }
+
+    const attDone = canTakePre(tid, user.id);
+    const preDone = hasSubmitted(tid, user.id, "PRE");
+    const postDone = hasSubmitted(tid, user.id, "POST");
+
+    if (!attDone) {
+      preBtn.disabled = true;
+      preBtn.innerHTML = "🔒 Take Pre-Test (Locked)";
+      preBtn.setAttribute("title", "Pre-Test is locked. You must mark attendance for this training first.");
+      postBtn.disabled = true;
+      postBtn.innerHTML = "🔒 Take Post-Test (Locked)";
+      postBtn.setAttribute("title", "Complete Attendance and Pre-Test first.");
+      note.innerHTML = `<span style="color:#ef4444;font-weight:600">🔒 Attendance Required:</span> You must mark verified attendance for this training before the Pre-Test is unlocked.`;
+    } else if (postDone) {
+      preBtn.disabled = true;
+      preBtn.innerHTML = "✓ Pre-Test Completed";
+      preBtn.removeAttribute("title");
+      postBtn.disabled = true;
+      postBtn.innerHTML = "✓ Post-Test Completed";
+      postBtn.removeAttribute("title");
+      note.innerHTML = `<span style="color:#10b981;font-weight:600">✓ Completed:</span> Both Pre-Test and Post-Test have been submitted.`;
+    } else if (!preDone) {
+      preBtn.disabled = false;
+      preBtn.innerHTML = "📝 Take Pre-Test";
+      preBtn.removeAttribute("title");
+      postBtn.disabled = true;
+      postBtn.innerHTML = "🔒 Take Post-Test (Locked)";
+      postBtn.setAttribute("title", "Post-Test is locked. You must complete and submit Pre-Test first.");
+      note.innerHTML = `<span style="color:#ef4444;font-weight:600">🔒 Post-Test is locked.</span> You must complete and submit the Pre-Test first.`;
+    } else {
+      preBtn.disabled = true;
+      preBtn.innerHTML = "✓ Pre-Test Completed";
+      preBtn.removeAttribute("title");
+      postBtn.disabled = false;
+      postBtn.innerHTML = "📝 Take Post-Test";
+      postBtn.removeAttribute("title");
+      note.innerHTML = `<span style="color:#10b981;font-weight:600">🔓 Post-Test unlocked!</span> Pre-Test completed. You may now take the Post-Test.`;
+    }
+  }
+
+  function renderTestTrainingSelect() {
+    const sel = byId("testTrainingSelect");
+    if (!sel) return;
 
     const list = trainingsVisibleToWorker();
+    const prevVal = sel.value;
     sel.innerHTML =
       `<option value="">Select Training</option>` +
       list.map((t) => `<option value="${t.id}">${t.title}</option>`).join("");
 
-    sel.onchange = () => {
-      if (!user || user.role !== ROLES.WORKER) return;
-      const tid = sel.value;
-      if (!tid) return (note.textContent = "");
+    if (prevVal && list.some((t) => t.id === prevVal)) {
+      sel.value = prevVal;
+    }
 
-      const preDone = hasSubmitted(tid, user.id, "PRE");
-      const postDone = hasSubmitted(tid, user.id, "POST");
-      if (postDone) return (note.textContent = "Post-Test already completed and locked.");
-      if (!preDone) return (note.textContent = "Post-Test is locked. Please complete the Pre-Test first.");
-      note.textContent = "Post-Test is unlocked. You may take the Post-Test now.";
-    };
+    sel.onchange = updateTestButtonStates;
+    updateTestButtonStates();
   }
 
   /* ==========================
@@ -1748,7 +2282,24 @@
     }
 
     LS.set(DBK.trainings, trainings);
-    showToast(editId ? "Training updated successfully" : "New training created", "success");
+
+    // 1. PERSIST DIRECTLY TO MYSQL BACKEND (ACID DURABILITY)
+    try {
+      const apiRes = await fetch(apiUrl("/api/trainings"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (apiRes.ok) {
+        console.log(`[API] Training ${id} (${status}) saved to MySQL successfully.`);
+      } else {
+        console.warn("[API] Failed to save training to MySQL:", await apiRes.text());
+      }
+    } catch (apiErr) {
+      console.warn("[API] Network error saving training to MySQL:", apiErr);
+    }
+
+    showToast(editId ? `Training updated successfully (${status})` : `New training created (${status})`, "success");
 
     await logEvent(editId ? "training_updated" : "training_created", {
       trainingId: id,
@@ -1829,10 +2380,11 @@
   function coveragePct_(attempts) {
     const map = new Map();
     attempts.forEach((a) => {
-      const key = `${a.trainingId}|${a.userId}`;
+      const key = `${a.trainingId}|${a.userId || a.workerUniqueId}`;
       const cur = map.get(key) || { pre: false, post: false };
-      if (a.type === "PRE") cur.pre = true;
-      if (a.type === "POST") cur.post = true;
+      const aType = (a.type || a.test_type || "").toUpperCase();
+      if (aType === "PRE") cur.pre = true;
+      if (aType === "POST") cur.post = true;
       map.set(key, cur);
     });
     const pairs = [...map.values()];
@@ -1842,12 +2394,23 @@
   }
 
   function trainingById_(trainings, id) {
-    return trainings.find((t) => t.id === id) || null;
+    return trainings.find((t) => t.id === id || t.title === id) || null;
   }
 
-  function latestAttemptFor_(attempts, trainingId, userId, type) {
+  function latestAttemptFor_(attempts, trainingId, userId, type, workerUniqueId) {
+    const typeUpper = (type || "").toUpperCase();
     const arr = attempts
-      .filter((a) => a.trainingId === trainingId && a.userId === userId && a.type === type)
+      .filter((a) => {
+        const aType = (a.type || a.test_type || "").toUpperCase();
+        if (aType !== typeUpper) return false;
+        const matchesUser = (
+          a.userId === userId ||
+          a.workerUniqueId === userId ||
+          (workerUniqueId && (a.userId === workerUniqueId || a.workerUniqueId === workerUniqueId))
+        );
+        if (!matchesUser) return false;
+        return a.trainingId === trainingId || a.trainingTitle === trainingId;
+      })
       .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
     return arr[0] || null;
   }
@@ -1871,10 +2434,10 @@
     if (selectedTrainingId) {
       const attemptedUsers = new Set(
         attempts
-          .filter((a) => a.trainingId === selectedTrainingId && (a.type === "PRE" || a.type === "POST"))
-          .map((a) => a.userId)
+          .filter((a) => (a.trainingId === selectedTrainingId || a.trainingTitle === selectedTrainingId) && ((a.type || "").toUpperCase() === "PRE" || (a.type || "").toUpperCase() === "POST"))
+          .flatMap((a) => [a.userId, a.workerUniqueId].filter(Boolean))
       );
-      workers = workers.filter((w) => attemptedUsers.has(w.id));
+      workers = workers.filter((w) => attemptedUsers.has(w.id) || attemptedUsers.has(w.workerUniqueId));
     }
 
     const head = `
@@ -1913,17 +2476,17 @@
 
         if (showSpecific) {
           t = trainingById_(trainings, selectedTrainingId);
-          pre = latestAttemptFor_(attempts, selectedTrainingId, w.id, "PRE");
-          post = latestAttemptFor_(attempts, selectedTrainingId, w.id, "POST");
+          pre = latestAttemptFor_(attempts, selectedTrainingId, w.id, "PRE", w.workerUniqueId);
+          post = latestAttemptFor_(attempts, selectedTrainingId, w.id, "POST", w.workerUniqueId);
         } else {
           const aAll = attempts
-            .filter((a) => a.userId === w.id && (a.type === "PRE" || a.type === "POST"))
+            .filter((a) => (a.userId === w.id || a.workerUniqueId === w.workerUniqueId) && ((a.type || "").toUpperCase() === "PRE" || (a.type || "").toUpperCase() === "POST"))
             .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
           const latest = aAll[0] || null;
           if (latest) {
             t = trainingById_(trainings, latest.trainingId);
-            pre = latestAttemptFor_(attempts, latest.trainingId, w.id, "PRE");
-            post = latestAttemptFor_(attempts, latest.trainingId, w.id, "POST");
+            pre = latestAttemptFor_(attempts, latest.trainingId, w.id, "PRE", w.workerUniqueId);
+            post = latestAttemptFor_(attempts, latest.trainingId, w.id, "POST", w.workerUniqueId);
           }
         }
 
@@ -1985,8 +2548,8 @@
     }
 
     const uniq = (arr) => [...new Set(arr)];
-    const pre = attempts.filter((a) => a.type === "PRE");
-    const post = attempts.filter((a) => a.type === "POST");
+    const pre = attempts.filter((a) => (a.type || a.test_type || "").toUpperCase() === "PRE");
+    const post = attempts.filter((a) => (a.type || a.test_type || "").toUpperCase() === "POST");
 
     const uniqWorkers = uniq(users.map((w) => w.id)).length;
     const uniqWorkersWithAnyAttempt = uniq(attempts.map((a) => a.userId)).length;
@@ -2058,9 +2621,9 @@
         .slice()
         .sort((a, b) => new Date(b.startAt || 0) - new Date(a.startAt || 0))
         .map((t) => {
-          const tAtt = attempts.filter((a) => a.trainingId === t.id);
-          const tPre = tAtt.filter((a) => a.type === "PRE");
-          const tPost = tAtt.filter((a) => a.type === "POST");
+          const tAtt = attempts.filter((a) => a.trainingId === t.id || a.trainingTitle === t.title);
+          const tPre = tAtt.filter((a) => (a.type || a.test_type || "").toUpperCase() === "PRE");
+          const tPost = tAtt.filter((a) => (a.type || a.test_type || "").toUpperCase() === "POST");
 
           return `
             <div class="item">
@@ -2261,13 +2824,44 @@
     downloadText(filename, csv);
   }
 
+  async function cleanTestData() {
+    if (!confirm("Are you sure you want to clean all test submissions, assessments, attendance, and AI recommendations? This will reset the database and application for fresh testing.")) {
+      return;
+    }
+    try {
+      showToast("Cleaning test data across Aiven database and application...", "info");
+      const res = await fetch(apiUrl("/api/admin/clean-test-data"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (res.ok) {
+        LS.set(DBK.attempts, []);
+        LS.set(DBK.attendance, []);
+        LS.set(DBK.offlineQueue, []);
+
+        const remedial = document.getElementById("aiRemedialContainer");
+        if (remedial) remedial.remove();
+
+        showToast("Database and Application cleaned successfully! Ready for fresh submissions.", "success", 4000);
+        renderAll();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.message || "Failed to clean test data", "error");
+      }
+    } catch (e) {
+      console.error("Clean test data error:", e);
+      showToast("Failed to clean test data: " + e.message, "error");
+    }
+  }
+  window.cleanTestData = cleanTestData;
+
   /* ==========================
      CORE RENDER FUNCTION
      ========================== */
   function renderAll() {
     setOnlineBadge();
     seedDistricts();
-    seedAdmin();
+    seedAdmin().catch((e) => console.warn("seedAdmin background sync error:", e));
     seedSampleTrainings();
     fillDistrictSelect();
     applyRoleVisibility();
@@ -2311,6 +2905,10 @@
       if (e.key === "Enter") login();
     });
 
+    // Quick demo login buttons
+    byId("quickWorkerBtn")?.addEventListener("click", quickWorkerLogin);
+    byId("quickAdminBtn")?.addEventListener("click", quickAdminLogin);
+
     // Password reset triggers & modal
     byId("forgotPassLink")?.addEventListener("click", openForgotModal);
     byId("closeForgotModalBtn")?.addEventListener("click", closeForgotModal);
@@ -2347,6 +2945,7 @@
       clearTrainingForm();
       showToast("Training form cleared", "info");
     });
+    byId("cleanTestDataBtn")?.addEventListener("click", cleanTestData);
 
     byId("tCategory")?.addEventListener("change", renderAdminTrainingSummary);
     byId("tStatus")?.addEventListener("change", renderAdminTrainingSummary);
@@ -2357,6 +2956,7 @@
       if (!user || user.role !== ROLES.WORKER) return showToast("Worker access only", "warn");
       const tid = byId("testTrainingSelect")?.value;
       if (!tid) return showToast("Please select a training first", "warn");
+      if (!canTakePre(tid, user.id)) return showToast("Pre-Test is locked! You must mark attendance for this training first.", "error");
       if (hasSubmitted(tid, user.id, "PRE")) return showToast("Pre-Test has already been completed.", "info");
       renderTestUI(tid, "PRE", getQuestions(tid, "PRE"));
     });
@@ -2366,8 +2966,20 @@
       if (!user || user.role !== ROLES.WORKER) return showToast("Worker access only", "warn");
       const tid = byId("testTrainingSelect")?.value;
       if (!tid) return showToast("Please select a training first", "warn");
-      if (!canTakePost(tid, user.id)) return showToast("Post-Test is locked. Please complete the Pre-Test first.", "warn");
+      if (!canTakePost(tid, user.id)) return showToast("Post-Test is strictly locked! You must complete and submit the Pre-Test first.", "error");
       if (hasSubmitted(tid, user.id, "POST")) return showToast("Post-Test has already been completed.", "info");
+      const attsAll = getAttempts();
+      const userPreCount = attsAll.filter((a) => 
+        (a.type || "").toUpperCase() === "PRE" && 
+        (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+      ).length;
+      const userPostCount = attsAll.filter((a) => 
+        (a.type || "").toUpperCase() === "POST" && 
+        (a.userId === user.id || a.workerUniqueId === user.workerUniqueId)
+      ).length;
+      if (userPostCount >= userPreCount) {
+        return showToast("Rule Enforced: Post-Test attempts cannot exceed Pre-Test attempts.", "error");
+      }
       renderTestUI(tid, "POST", getQuestions(tid, "POST"));
     });
 
@@ -2378,9 +2990,37 @@
       renderAll();
     });
 
+    byId("wRefreshBtn")?.addEventListener("click", async () => {
+      await syncFromMySQLPrimary();
+      renderAll();
+      const u = currentUser();
+      if (u && window.onUserAuthorized) {
+        window.onUserAuthorized(u.workerUniqueId || u.phone || u.id, true);
+      }
+    });
+
     byId("viewQueueBtn")?.addEventListener("click", () => {
       byId("queuePanel")?.classList.toggle("hidden");
       refreshQueueUI();
+    });
+
+    byId("apiServerBtn")?.addEventListener("click", () => {
+      const current = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
+      const input = prompt(
+        "Enter your Live Backend API Server URL (e.g. from Render: https://your-app.onrender.com):\nLeave empty to use local server (http://localhost:5000):",
+        current
+      );
+      if (input !== null) {
+        const clean = input.trim().replace(/\/+$/, "");
+        if (clean) {
+          localStorage.setItem(API_STORAGE_KEY, clean);
+          showToast(`Backend API Server updated: ${clean}`, "success");
+        } else {
+          localStorage.removeItem(API_STORAGE_KEY);
+          showToast("Reset to default relative API paths.", "info");
+        }
+        syncFromMySQLPrimary();
+      }
     });
 
     byId("closeQueueBtn")?.addEventListener("click", () => {
@@ -2467,11 +3107,11 @@
     try {
       // 1. DYNAMIC PRIMARY SYNC: USERS FROM MYSQL
       try {
-        const uRes = await fetch("/api/users");
+        const uRes = await fetch(apiUrl("/api/users"));
         if (uRes.ok) {
           const uData = await uRes.json();
           if (uData.status === "success" && Array.isArray(uData.users) && uData.users.length > 0) {
-            const defaultWorkerHash = "PASSWORD_RESET_REQUIRED";
+            const defaultWorkerHash = await hashPassword("Worker@123");
             const defaultAdminHash = await hashPassword("Admin@123");
             const existing = LS.get(DBK.users, []);
             const prevMap = new Map();
@@ -2513,7 +3153,7 @@
 
       // 2. DYNAMIC PRIMARY SYNC: TRAININGS FROM MYSQL
       try {
-        const res = await fetch("/api/trainings");
+        const res = await fetch(apiUrl("/api/trainings"));
         if (res.ok) {
           const data = await res.json();
           if (data.status === "success" && Array.isArray(data.trainings) && data.trainings.length > 0) {
@@ -2530,7 +3170,9 @@
               gpsRequired: Boolean(t.gps_required),
               attendanceOpenAt: t.attendance_open_at,
               attendanceCloseAt: t.attendance_close_at,
-              assessments: t.assessments_json ? JSON.parse(t.assessments_json) : { pre: JSON.parse(defaultPreJson()), post: JSON.parse(defaultPostJson()) },
+              assessments: (typeof t.assessments_json === "object" && t.assessments_json !== null)
+                ? t.assessments_json
+                : (t.assessments_json ? (() => { try { return JSON.parse(t.assessments_json); } catch { return null; } })() : null) || { pre: JSON.parse(defaultPreJson()), post: JSON.parse(defaultPostJson()) },
               createdAt: t.created_at,
               updatedAt: t.updated_at
             }));
@@ -2543,13 +3185,11 @@
 
       // 3. DYNAMIC PRIMARY SYNC: ATTENDANCE FROM MYSQL
       try {
-        const attRes = await fetch("/api/attendance");
+        const attRes = await fetch(apiUrl("/api/attendance"));
         if (attRes.ok) {
           const attData = await attRes.json();
           if (attData.status === "success" && Array.isArray(attData.attendance)) {
-            const existingAtt = LS.get(DBK.attendance, []);
             const attMap = new Map();
-            existingAtt.forEach((a) => attMap.set(`${a.trainingId}_${a.userId}`, a));
 
             attData.attendance.forEach((a) => {
               const key = `${a.training_id}_${a.user_id}`;
@@ -2578,28 +3218,40 @@
 
       // 4. DYNAMIC PRIMARY SYNC: ATTEMPTS FROM MYSQL
       try {
-        const atmpRes = await fetch("/api/attempts");
+        const atmpRes = await fetch(apiUrl("/api/attempts"));
         if (atmpRes.ok) {
           const atmpData = await atmpRes.json();
           if (atmpData.status === "success" && Array.isArray(atmpData.attempts)) {
-            const existingAtmp = LS.get(DBK.attempts, []);
+            const trainings = LS.get(DBK.trainings, []);
             const atmpMap = new Map();
-            existingAtmp.forEach((a) => atmpMap.set(`${a.trainingId}_${a.userId}_${a.type}`, a));
 
             atmpData.attempts.forEach((a) => {
               const typeUpper = (a.test_type || "post").toUpperCase();
-              const key = `${a.training_id}_${a.user_id}_${typeUpper}`;
+              const match = trainings.find((t) => t.id === a.training_id || t.title === a.training_id || t.title === a.training_title);
+              const canonicalId = match ? match.id : a.training_id;
+              const key = `${canonicalId}_${a.user_id}_${typeUpper}`;
+
+              const qCount = (typeUpper === "PRE" ? match?.assessments?.pre?.length : match?.assessments?.post?.length) || 2;
+              let sc = Number(a.score != null ? a.score : 0);
+              let tm = Number(a.total_marks || qCount);
+              if (tm > 10 && qCount <= 10) {
+                sc = Math.round((Number(a.percent || 0) / 100) * qCount);
+                tm = qCount;
+              }
+
               atmpMap.set(key, {
                 id: a.id || uuid(),
-                trainingId: a.training_id,
+                trainingId: canonicalId,
+                trainingTitle: a.training_title || match?.title || "",
                 userId: a.user_id,
                 workerUniqueId: a.worker_unique_id,
                 fullName: a.full_name,
+                phone: a.phone,
                 type: typeUpper,
-                score: Number(a.score || 0),
-                totalMarks: Number(a.total_marks || 100),
-                percent: Number(a.percent || 0),
-                passed: Boolean(a.passed),
+                score: sc,
+                totalMarks: tm,
+                percent: Number(a.percent != null ? a.percent : 0),
+                passed: Boolean(a.passed || (Number(a.percent || 0) >= 60)),
                 submittedAt: a.submitted_at || nowIso()
               });
             });
@@ -2617,21 +3269,52 @@
   }
 
   async function init() {
-    registerServiceWorker();
-    seedDistricts();
-    await seedAdmin();
-    seedSampleTrainings();
-    clearTrainingForm();
-    setOnlineBadge();
-    const u = currentUser();
-    if (u) {
-      routeAfterLogin();
-    } else {
+    // 1. Always wire interactive events immediately so buttons never become unresponsive
+    try {
+      wireEvents();
+    } catch (e) {
+      console.error("wireEvents error:", e);
+    }
+
+    try {
+      registerServiceWorker();
+    } catch (e) {
+      console.warn("Service Worker registration notice:", e);
+    }
+
+    try {
+      seedDistricts();
+      await seedAdmin();
+      seedSampleTrainings();
+      clearTrainingForm();
+      setOnlineBadge();
+    } catch (e) {
+      console.error("Initialization seeding error:", e);
+    }
+
+    try {
+      const u = currentUser();
+      if (u) {
+        routeAfterLogin();
+      } else {
+        setActiveView("viewAuth");
+      }
+    } catch (e) {
+      console.error("Routing error:", e);
       setActiveView("viewAuth");
     }
-    wireEvents();
-    renderAll();
-    syncFromMySQLPrimary();
+
+    try {
+      renderAll();
+    } catch (e) {
+      console.error("renderAll error:", e);
+    }
+
+    try {
+      syncFromMySQLPrimary();
+    } catch (e) {
+      console.debug("Initial primary sync notice:", e);
+    }
   }
 
   if (document.readyState === "loading") {
