@@ -1131,8 +1131,8 @@ def manage_trainings():
 def record_attendance():
     """Attendance check-in write to Aiven PostgreSQL with in-memory persistence."""
     data = request.get_json() or {}
-    training_id = (data.get("trainingId") or data.get("training_id") or "").strip()
-    user_id = (data.get("userId") or data.get("user_id") or "").strip()
+    training_id = str(data.get("trainingId") or data.get("training_id") or "").strip()
+    user_id = str(data.get("userId") or data.get("user_id") or "").strip()
 
     if not training_id or not user_id:
         return jsonify({"status": "error", "message": "training_id and user_id required"}), 400
@@ -1328,7 +1328,7 @@ def submit_assessment():
     t0 = datetime.now()
     try:
         data = request.get_json() or {}
-        user_id = (data.get("user_id") or data.get("userId") or "").strip()
+        user_id = str(data.get("user_id") or data.get("userId") or "").strip()
         module_name = (data.get("module_name") or data.get("trainingTitle") or "e-IMNCI Child Nutrition").strip()
         training_id_val = str(data.get("trainingId") or data.get("training_id") or module_name).strip()[:255]
         score_val = float(data.get("score") if data.get("score") is not None else (data.get("post_test_score") or data.get("postScore") or 0))
@@ -1340,14 +1340,19 @@ def submit_assessment():
         if not user_id:
             return jsonify({"status": "error", "message": "Field 'user_id' is required"}), 400
 
-        test_type_val = str(data.get("test_type") or data.get("type") or "post").strip().lower()
+        test_type_val = str(data.get("test_type") or data.get("testType") or data.get("type") or "post").strip().lower()
         if test_type_val not in ("pre", "post"):
             test_type_val = "post"
 
-        if total_marks_val > 0:
+        if data.get("percent") is not None:
+            percent_val = float(data.get("percent"))
+        elif total_marks_val > 0:
             percent_val = round((score_val / total_marks_val) * 100, 2)
         else:
             percent_val = round(score_val, 2)
+        percent_val = max(0.0, min(100.0, percent_val))
+        pre_score = max(0.0, min(100.0, pre_score))
+        post_score = max(0.0, min(100.0, post_score))
 
         conn_check = get_db_connection()
         if conn_check:
@@ -1356,6 +1361,25 @@ def submit_assessment():
                     tbl_tr = resolve_table_name(cur, ["trainings", "training", "Trainings", "Training"], "trainings")
                     tbl_att = resolve_table_name(cur, ["attendance", "Attendance"], "attendance")
                     tbl_atmp = resolve_table_name(cur, ["attempts", "attempt", "Attempts"], "attempts")
+                    tbl_u = resolve_table_name(cur, ["users", "user", "Users"], "users")
+
+                    # Resolve worker identities across UUID, worker_unique_id, and phone
+                    cur.execute(f"""
+                        SELECT id, worker_unique_id, phone FROM {tbl_u}
+                        WHERE id::text = %s OR worker_unique_id = %s OR phone = %s
+                        LIMIT 1;
+                    """, (user_id, user_id, user_id))
+                    u_chk = cur.fetchone() or {}
+                    cand_ids = list({str(x) for x in [
+                        user_id,
+                        data.get("workerUniqueId"),
+                        data.get("worker_unique_id"),
+                        data.get("phone"),
+                        u_chk.get("id"),
+                        u_chk.get("worker_unique_id"),
+                        u_chk.get("phone")
+                    ] if x})
+                    id_placeholders = ','.join(['%s'] * len(cand_ids))
 
                     # 0. Ensure training module is not in Draft status
                     cur.execute(f"""
@@ -1382,10 +1406,10 @@ def submit_assessment():
                             cur.execute(f"""
                                 SELECT id FROM {tbl_att}
                                 WHERE (training_id = %s OR training_id = %s)
-                                  AND (user_id = %s OR worker_unique_id = %s OR phone = %s)
+                                  AND (user_id IN ({id_placeholders}) OR worker_unique_id IN ({id_placeholders}) OR phone IN ({id_placeholders}))
                                   AND status = 'Present'
                                 LIMIT 1;
-                            """, (training_id_val, module_name, user_id, user_id, user_id))
+                            """, [training_id_val, module_name] + cand_ids + cand_ids + cand_ids)
                             if not cur.fetchone():
                                 return jsonify({
                                     "status": "error",
@@ -1396,10 +1420,10 @@ def submit_assessment():
                         cur.execute(f"""
                             SELECT id FROM {tbl_atmp} 
                             WHERE (training_id = %s OR training_title = %s)
-                              AND (user_id = %s OR worker_unique_id = %s OR phone = %s)
+                              AND (user_id IN ({id_placeholders}) OR worker_unique_id IN ({id_placeholders}) OR phone IN ({id_placeholders}))
                               AND LOWER(test_type) = 'pre'
                             LIMIT 1;
-                        """, (training_id_val, module_name, user_id, user_id, user_id))
+                        """, [training_id_val, module_name] + cand_ids + cand_ids + cand_ids)
                         if cur.fetchone():
                             return jsonify({
                                 "status": "error",
@@ -1411,10 +1435,10 @@ def submit_assessment():
                         cur.execute(f"""
                             SELECT id FROM {tbl_atmp} 
                             WHERE (training_id = %s OR training_title = %s)
-                              AND (user_id = %s OR worker_unique_id = %s OR phone = %s)
+                              AND (user_id IN ({id_placeholders}) OR worker_unique_id IN ({id_placeholders}) OR phone IN ({id_placeholders}))
                               AND LOWER(test_type) = 'pre'
                             LIMIT 1;
-                        """, (training_id_val, module_name, user_id, user_id, user_id))
+                        """, [training_id_val, module_name] + cand_ids + cand_ids + cand_ids)
                         if not cur.fetchone():
                             return jsonify({
                                 "status": "error",
@@ -1428,8 +1452,8 @@ def submit_assessment():
                                 SUM(CASE WHEN LOWER(test_type) = 'post' THEN 1 ELSE 0 END) AS post_count
                             FROM {tbl_atmp}
                             WHERE (training_id = %s OR training_title = %s)
-                              AND (user_id = %s OR worker_unique_id = %s OR phone = %s);
-                        """, (training_id_val, module_name, user_id, user_id, user_id))
+                              AND (user_id IN ({id_placeholders}) OR worker_unique_id IN ({id_placeholders}) OR phone IN ({id_placeholders}));
+                        """, [training_id_val, module_name] + cand_ids + cand_ids + cand_ids)
                         totals = cur.fetchone() or {}
                         pre_cnt = totals.get("pre_count") or 0
                         post_cnt = totals.get("post_count") or 0
@@ -1547,11 +1571,11 @@ def submit_assessment():
             "workerUniqueId": data.get("workerUniqueId") or user_id,
             "fullName": data.get("fullName", ""),
             "trainingTitle": module_name,
-            "testType": "post",
-            "score": post_score,
-            "totalMarks": 100,
-            "percent": post_score,
-            "passed": "Yes" if post_score >= 60 else "No"
+            "testType": test_type_val,
+            "score": score_val,
+            "totalMarks": total_marks_val,
+            "percent": percent_val,
+            "passed": "Yes" if percent_val >= 60 else "No"
         })
 
         elapsed_ms = (datetime.now() - t0).total_seconds() * 1000
