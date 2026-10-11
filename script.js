@@ -1111,12 +1111,13 @@
           renderAll();
           routeAfterLogin();
           return;
-        } else if (res.status === 400 || res.status === 409) {
-          const err = await res.json().catch(() => ({}));
-          if (err.message) return showToast(err.message, "error");
         }
+      } else if (res.status === 400 || res.status === 409) {
+        const err = await res.json().catch(() => ({}));
+        if (err.message) return showToast(err.message, "error");
       }
-    } catch (apiErr) {
+    }
+  } catch (apiErr) {
       console.warn("Backend registration offline, saving locally:", apiErr);
     }
 
