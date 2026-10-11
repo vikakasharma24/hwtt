@@ -12,15 +12,25 @@
       if (queryApi) {
         const cleanQueryApi = queryApi.trim().replace(/\/+$/, "");
         if (cleanQueryApi.startsWith("http")) {
-          localStorage.setItem(API_STORAGE_KEY, cleanQueryApi);
-          return cleanQueryApi;
+          if (!cleanQueryApi.includes("github.io") && !cleanQueryApi.includes("pages.dev")) {
+            localStorage.setItem(API_STORAGE_KEY, cleanQueryApi);
+            return cleanQueryApi;
+          }
         }
       }
     } catch (_) {}
 
     try {
       const custom = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
-      if (custom) return custom.replace(/\/+$/, "");
+      if (custom) {
+        const clean = custom.replace(/\/+$/, "");
+        // If someone accidentally entered their GitHub Pages URL as the API server
+        if (clean.includes("github.io") || clean.includes("pages.dev")) {
+          localStorage.removeItem(API_STORAGE_KEY);
+          return "";
+        }
+        return clean;
+      }
     } catch (_) {}
 
     if (window.location.port === "5000" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
@@ -33,7 +43,14 @@
   function apiUrl(endpoint) {
     const base = getApiBaseUrl();
     const cleanPath = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
-    return base ? (base + cleanPath) : cleanPath;
+    if (base) {
+      return base + cleanPath;
+    }
+    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+    if (isStaticDeploy) {
+      return "";
+    }
+    return cleanPath;
   }
 
   window.apiUrl = apiUrl;
@@ -342,10 +359,12 @@
     if (isStaticDeploy && !base) {
       return false;
     }
+    const pingUrl = apiUrl("/api/health");
+    if (!pingUrl) return false;
     try {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 3500);
-      const res = await fetch(apiUrl("/api/health"), { signal: ctrl.signal });
+      const res = await fetch(pingUrl, { signal: ctrl.signal });
       clearTimeout(tid);
       return res.ok;
     } catch (_) {
@@ -354,24 +373,35 @@
   }
 
   async function sendToSheet(payload, isFromQueue = false) {
+    const base = getApiBaseUrl();
+    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+
+    // In standalone static mode with no backend configured, do not accumulate stuck offline queue items
+    if (isStaticDeploy && !base) {
+      return { ok: true, standalone: true };
+    }
+
     // 1. PRIMARY FAST WRITE TO AIVEN POSTGRESQL (< 5ms response time)
     if (navigator.onLine) {
-      try {
-        const apiRes = await fetch(apiUrl("/api/events/log"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (apiRes.ok) {
-          const json = await apiRes.json();
-          LS.set(DBK.lastSync, nowIso());
-          setSyncStatus("success", `Synced with Aiven Enterprise Database (${json.latency_ms || "1"}ms)`);
-          return json;
-        } else {
-          console.warn(`[Sync] /api/events/log HTTP ${apiRes.status}`);
+      const url = apiUrl("/api/events/log");
+      if (url) {
+        try {
+          const apiRes = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (apiRes.ok) {
+            const json = await apiRes.json();
+            LS.set(DBK.lastSync, nowIso());
+            setSyncStatus("success", `Synced with Aiven Enterprise Database (${json.latency_ms || "1"}ms)`);
+            return json;
+          } else {
+            console.warn(`[Sync] /api/events/log HTTP ${apiRes.status}`);
+          }
+        } catch (apiErr) {
+          console.warn("[Sync] /api/events/log network error:", apiErr);
         }
-      } catch (apiErr) {
-        console.warn("[Sync] /api/events/log network error:", apiErr);
       }
     }
 
@@ -388,31 +418,33 @@
       return;
     }
 
+    const base = getApiBaseUrl();
+    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
     const queue = getQueue();
-    const isOnlineWithBackend = await checkBackendConnectivity();
 
-    if (!isOnlineWithBackend) {
-      const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+    // Case 1: Standalone PWA Mode on GitHub Pages without external backend
+    if (isStaticDeploy && !base) {
       if (queue.length > 0) {
-        if (isStaticDeploy && !getApiBaseUrl()) {
-          showToast(
-            `Standalone mode: ${queue.length} action(s) stored locally. Click 'Queue' -> 'Clear' to discard or set 'API Server'.`,
-            "warn",
-            6000
-          );
-        } else {
-          showToast(
-            `Backend server unreachable (${apiUrl("/api/health")}). ${queue.length} action(s) remain queued.`,
-            "warn",
-            5000
-          );
-        }
+        saveQueue([]);
+        refreshQueueUI();
+        showToast("Standalone Mode: Offline queue cleared. Ready for pilot testing.", "success", 5000);
       } else {
-        if (isStaticDeploy && !getApiBaseUrl()) {
-          showToast("Local data up to date (Standalone Mode). Configure 'API Server' to connect live backend.", "info", 5000);
-        } else {
-          showToast("Backend database connection offline", "warn");
-        }
+        showToast("Standalone PWA Mode: Real-user training & assessment active.", "success", 4000);
+      }
+      return;
+    }
+
+    // Case 2: External backend or localhost
+    const isOnlineWithBackend = await checkBackendConnectivity();
+    if (!isOnlineWithBackend) {
+      if (queue.length > 0) {
+        showToast(
+          `Cloud backend offline (${base ? base + "/api/health" : "/api/health"}). Click 'Queue' -> 'Clear' to discard or check server status.`,
+          "warn",
+          6000
+        );
+      } else {
+        showToast("Backend database connection offline", "warn");
       }
       refreshQueueUI();
       return;
@@ -3299,17 +3331,23 @@
     byId("apiServerBtn")?.addEventListener("click", () => {
       const current = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
       const input = prompt(
-        "Enter your Live Backend API Server URL (e.g. from Render: https://your-app.onrender.com):\nLeave empty to use local server (http://localhost:5000):",
+        "Enter your Live Backend API Server URL (e.g. from Render: https://your-backend.onrender.com):\nLeave empty for Standalone PWA Mode (or local server http://localhost:5000):",
         current
       );
       if (input !== null) {
         const clean = input.trim().replace(/\/+$/, "");
         if (clean) {
-          localStorage.setItem(API_STORAGE_KEY, clean);
-          showToast(`Backend API Server updated: ${clean}`, "success");
+          if (clean.includes("github.io") || clean.includes("pages.dev")) {
+            alert("Notice: GitHub Pages only serves static files and cannot execute the Python Flask backend.\nPlease enter a cloud server URL (e.g. from Render: https://your-app.onrender.com), or leave blank for Standalone PWA mode.");
+            localStorage.removeItem(API_STORAGE_KEY);
+            showToast("Reset to Standalone PWA mode.", "info");
+          } else {
+            localStorage.setItem(API_STORAGE_KEY, clean);
+            showToast(`Backend API Server updated: ${clean}`, "success");
+          }
         } else {
           localStorage.removeItem(API_STORAGE_KEY);
-          showToast("Reset to default relative API paths.", "info");
+          showToast("Reset to default Standalone PWA mode.", "info");
         }
         syncFromCloudPrimary();
       }
@@ -3399,12 +3437,10 @@
     const base = getApiBaseUrl();
     const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
     if (isStaticDeploy && !base) {
-      console.info("[Portal] Standalone PWA mode: master cloud dataset active.");
+      console.info("[Portal] Standalone PWA mode: master catalog active for real user testing.");
       seedDistricts();
       await seedAdmin();
       seedMasterTrainings();
-      seedMasterAttendance();
-      seedMasterAttempts();
       renderAll();
       return;
     }
@@ -3590,12 +3626,25 @@
       console.warn("Service Worker registration notice:", e);
     }
 
+    // 0. Clean stale test data and invalid github.io API URL from browser storage for real pilot testing
+    try {
+      const PILOT_FLAG = "jh_pilot_v1_clean";
+      if (!localStorage.getItem(PILOT_FLAG)) {
+        localStorage.removeItem(DBK.attendance);
+        localStorage.removeItem(DBK.attempts);
+        localStorage.removeItem(DBK.offlineQueue);
+        const storedApi = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
+        if (storedApi.includes("github.io") || storedApi.includes("pages.dev")) {
+          localStorage.removeItem(API_STORAGE_KEY);
+        }
+        localStorage.setItem(PILOT_FLAG, "true");
+      }
+    } catch (_) {}
+
     try {
       seedDistricts();
       await seedAdmin();
       seedMasterTrainings();
-      seedMasterAttendance();
-      seedMasterAttempts();
       clearTrainingForm();
       setOnlineBadge();
     } catch (e) {

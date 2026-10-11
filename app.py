@@ -233,48 +233,10 @@ in_memory_db = {
             })
         }
     },
-    "attendance": [
-        {"id": 9, "training_id": "T-MCH-002", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "status": "Present", "checked_in_at": "2026-10-06 00:18:59"},
-        {"id": 10, "training_id": "T-IMNCI-003", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "status": "Present", "checked_in_at": "2026-10-06 00:46:03"},
-        {"id": 11, "training_id": "T-UIP-004", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "status": "Present", "checked_in_at": "2026-10-06 00:48:26"},
-        {"id": 12, "training_id": "T-TB-001", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "status": "Present", "checked_in_at": "2026-10-06 00:48:44"},
-        {"id": 13, "training_id": "T-IMNCI-003", "user_id": "e547834b-1166-4e49-810c-75dc6b2af273", "worker_unique_id": "JH782494", "full_name": "Daymand", "phone": "9431590185", "designation": "CHO", "facility_name": "CHC Namkum", "district_name": "Ranchi", "status": "Present", "checked_in_at": "2026-10-06 17:06:26"}
-    ],
-    "attempts": [
-        {"id": 23, "training_id": "T-MCH-002", "training_title": "Comprehensive Maternal & Newborn Health Care Protocols", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "pre", "score": 1.0, "total_marks": 2.0, "percent": 50.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:19:08"},
-        {"id": 24, "training_id": "T-MCH-002", "training_title": "Comprehensive Maternal & Newborn Health Care Protocols", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "post", "score": 1.0, "total_marks": 2.0, "percent": 50.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:20:50"},
-        {"id": 25, "training_id": "T-IMNCI-003", "training_title": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "pre", "score": 1.0, "total_marks": 2.0, "percent": 50.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:46:18"},
-        {"id": 26, "training_id": "T-IMNCI-003", "training_title": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "post", "score": 2.0, "total_marks": 2.0, "percent": 100.0, "passed": 1, "answers_json": None, "submitted_at": "2026-10-06 00:46:50"},
-        {"id": 27, "training_id": "T-TB-001", "training_title": "National Tuberculosis Elimination Program (NTEP) Refresher", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "pre", "score": 0.0, "total_marks": 2.0, "percent": 0.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:53:08"},
-        {"id": 28, "training_id": "T-TB-001", "training_title": "National Tuberculosis Elimination Program (NTEP) Refresher", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "post", "score": 2.0, "total_marks": 2.0, "percent": 100.0, "passed": 1, "answers_json": None, "submitted_at": "2026-10-06 00:53:15"},
-        {"id": 29, "training_id": "T-UIP-004", "training_title": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "pre", "score": 0.0, "total_marks": 2.0, "percent": 0.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:53:26"},
-        {"id": 30, "training_id": "T-UIP-004", "training_title": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "user_id": "88f24edb-0a68-450e-a4fe-d54625b34da5", "worker_unique_id": "JH559304", "full_name": "Vikash Sharma", "phone": "7004369523", "designation": "ANM", "facility_name": "ratu", "district_name": "Ranchi", "test_type": "post", "score": 1.0, "total_marks": 2.0, "percent": 50.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 00:53:54"},
-        {"id": 31, "training_id": "T-IMNCI-003", "training_title": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "user_id": "e547834b-1166-4e49-810c-75dc6b2af273", "worker_unique_id": "JH782494", "full_name": "Daymand", "phone": "9431590185", "designation": "CHO", "facility_name": "CHC Namkum", "district_name": "Ranchi", "test_type": "pre", "score": 1.0, "total_marks": 2.0, "percent": 50.0, "passed": 0, "answers_json": None, "submitted_at": "2026-10-06 17:06:30"},
-        {"id": 32, "training_id": "T-IMNCI-003", "training_title": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "user_id": "e547834b-1166-4e49-810c-75dc6b2af273", "worker_unique_id": "JH782494", "full_name": "Daymand", "phone": "9431590185", "designation": "CHO", "facility_name": "CHC Namkum", "district_name": "Ranchi", "test_type": "post", "score": 2.0, "total_marks": 2.0, "percent": 100.0, "passed": 1, "answers_json": None, "submitted_at": "2026-10-06 17:06:35"}
-    ],
-    "assessments": [
-        {"id": 12, "user_id": "JH559304", "module_name": "Comprehensive Maternal & Newborn Health Care Protocols", "pre_test_score": 50.0, "post_test_score": 50.0, "time_spent_seconds": 15, "percent": 50.0, "passed": 0, "created_at": "2026-10-06 00:20:50"},
-        {"id": 13, "user_id": "JH559304", "module_name": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "pre_test_score": 50.0, "post_test_score": 100.0, "time_spent_seconds": 15, "percent": 100.0, "passed": 1, "created_at": "2026-10-06 00:46:50"},
-        {"id": 14, "user_id": "JH559304", "module_name": "National Tuberculosis Elimination Program (NTEP) Refresher", "pre_test_score": 0.0, "post_test_score": 100.0, "time_spent_seconds": 15, "percent": 100.0, "passed": 1, "created_at": "2026-10-06 00:53:15"},
-        {"id": 15, "user_id": "JH559304", "module_name": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "pre_test_score": 0.0, "post_test_score": 50.0, "time_spent_seconds": 18, "percent": 50.0, "passed": 0, "created_at": "2026-10-06 00:53:54"},
-        {"id": 16, "user_id": "JH782494", "module_name": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "pre_test_score": 50.0, "post_test_score": 100.0, "time_spent_seconds": 15, "percent": 100.0, "passed": 1, "created_at": "2026-10-06 17:06:35"}
-    ],
-    "ai_remedial_recommendations": {
-        "JH559304_Comprehensive Maternal & Newborn Health Care Protocols": {
-            "id": 12, "user_id": "JH559304", "module_name": "Comprehensive Maternal & Newborn Health Care Protocols",
-            "predicted_risk_level": "High", "recommended_topic_id": "TOPIC-MH-PPH-03",
-            "remedial_title": "Emergency Obstetric Protocol: Active Management of PPH & Oxytocin Use",
-            "remedial_video_url": "https://assets.nhm.gov.in/training/maternal_health_pph_emergency.mp4",
-            "confidence_score": 1.0, "historical_failure_density": 1.0, "is_resolved": 0
-        },
-        "JH559304_Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness": {
-            "id": 13, "user_id": "JH559304", "module_name": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
-            "predicted_risk_level": "High", "recommended_topic_id": "TOPIC-UIP-COLD-04",
-            "remedial_title": "Cold Chain Logistics, Temperature Maintenance & Anaphylaxis Protocol",
-            "remedial_video_url": "https://assets.nhm.gov.in/training/uip_cold_chain_management.mp4",
-            "confidence_score": 1.0, "historical_failure_density": 0.5, "is_resolved": 0
-        }
-    },
+    "attendance": [],
+    "attempts": [],
+    "assessments": [],
+    "ai_remedial_recommendations": {},
     "event_logs": []
 }
 
@@ -556,25 +518,6 @@ def init_db():
                         tr["attendance_open_at"], tr["attendance_close_at"], tr["assessments_json"]
                     ))
                 logger.info("Auto-seeded 4 core clinical trainings into clean Aiven database.")
-
-            # 11. Seed default attendance records if attendance table is empty
-            cursor.execute("SELECT COUNT(*) AS cnt FROM attendance;")
-            row = cursor.fetchone() or {}
-            att_cnt = list(row.values())[0] if row else 0
-            if att_cnt == 0:
-                for att in in_memory_db["attendance"]:
-                    cursor.execute("""
-                        INSERT INTO attendance 
-                            (training_id, user_id, worker_unique_id, full_name, phone, designation, facility_name, district_name, status, checked_in_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (training_id, user_id) DO UPDATE SET status = EXCLUDED.status;
-                    """, (
-                        att["training_id"], att["user_id"], att["worker_unique_id"], att["full_name"],
-                        att["phone"], att["designation"], att["facility_name"], att["district_name"],
-                        att["status"], att["checked_in_at"]
-                    ))
-                logger.info("Auto-seeded initial attendance records into clean Aiven database.")
-
             logger.info("Aiven PostgreSQL Enterprise Schema Verified: 7 primary tables and compatibility views active.")
     except Exception as e:
         logger.warning("Aiven PostgreSQL Schema Initialization warning: %s", e)

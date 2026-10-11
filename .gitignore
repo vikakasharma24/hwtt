@@ -16,6 +16,8 @@ __pycache__/
 # Database & SQLite files
 *.sqlite3
 *.db
+backup_before_pilot.json
+*.backup
 
 # Logs & Runtime
 *.log
