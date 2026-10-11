@@ -521,6 +521,17 @@ textarea {
   color: #b45309;
 }
 
+#pendingBadge {
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+#pendingBadge:hover {
+  transform: translateY(-1px);
+  filter: brightness(0.95);
+}
+
 .badge.bad {
   border-color: var(--red-border);
   background: var(--red-light);

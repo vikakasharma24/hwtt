@@ -1,9 +1,9 @@
 """
 ==============================================================================
-Google Sheet Data Importer to MySQL Primary Database
+Google Sheet Data Importer to Aiven Cloud PostgreSQL Database
 ==============================================================================
-Populates jh_health_db with initial users from the Google Sheet
-and pre-configured training curriculum.
+Populates Aiven.io PostgreSQL defaultdb with initial users from the Google Sheet
+and pre-configured training curriculum. Decoupled from desktop MySQL.
 ==============================================================================
 """
 
@@ -11,27 +11,39 @@ import os
 import sys
 import uuid
 import hashlib
-import pymysql
+import psycopg2
 
-PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1"
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+PASSWORD_SALT = os.getenv("PASSWORD_SALT", "JH_HEALTH_PORTAL_SALT_v1")
 
 def hash_password(plain_text: str) -> str:
     data = (plain_text + ":" + PASSWORD_SALT).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
 
 def run():
-    host = os.getenv("MYSQL_HOST", "localhost")
-    user = os.getenv("MYSQL_USER", "root")
-    password = os.getenv("MYSQL_PASSWORD", "Falcon@123")
-    database = os.getenv("MYSQL_DB", "jh_health_db")
-    port = int(os.getenv("MYSQL_PORT", 3306))
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pghost = os.getenv("PGHOST", "pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com")
+        pgport = os.getenv("PGPORT", "14071")
+        pguser = os.getenv("PGUSER", "avnadmin")
+        pgpass = os.getenv("PGPASSWORD", "AVNS_yag-iD7BkdGKwWw4jXs")
+        pgdb = os.getenv("PGDATABASE", "defaultdb")
+        pgssl = os.getenv("PGSSLMODE", "require")
+        database_url = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"
 
     print("=================================================================")
-    print(">> POPULATING MYSQL PRIMARY DATABASE FROM GOOGLE SHEETS")
-    print(f"   Connecting to {user}@{host}:{port}/{database}...")
+    print(">> POPULATING AIVEN CLOUD POSTGRESQL FROM GOOGLE SHEETS")
+    safe_url = database_url.split("@")[1] if "@" in database_url else database_url
+    print(f"   Connecting to {safe_url}...")
     print("=================================================================")
 
-    conn = pymysql.connect(host=host, user=user, password=password, database=database, autocommit=True)
+    conn = psycopg2.connect(database_url)
+    conn.autocommit = True
 
     default_admin_hash = hash_password("Admin@123")
     default_worker_hash = "PASSWORD_RESET_REQUIRED"
@@ -78,13 +90,13 @@ def run():
                  designation, facility_name, facility_type, city_or_village,
                  district_id, district_name, state)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                full_name = VALUES(full_name),
-                designation = VALUES(designation),
-                facility_name = VALUES(facility_name),
-                facility_type = VALUES(facility_type),
-                city_or_village = VALUES(city_or_village),
-                district_name = VALUES(district_name)
+            ON CONFLICT (id) DO UPDATE SET
+                full_name = EXCLUDED.full_name,
+                designation = EXCLUDED.designation,
+                facility_name = EXCLUDED.facility_name,
+                facility_type = EXCLUDED.facility_type,
+                city_or_village = EXCLUDED.city_or_village,
+                district_name = EXCLUDED.district_name;
         """
         for u in initial_users:
             cur.execute(user_insert_sql, (
@@ -132,10 +144,10 @@ def run():
                 (id, category, status, title, mode, venue, start_at, end_at, 
                  attendance_enabled, gps_required, attendance_open_at, attendance_close_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                venue = VALUES(venue),
-                status = VALUES(status)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                venue = EXCLUDED.venue,
+                status = EXCLUDED.status;
         """
         for t in sample_trainings:
             cur.execute(training_sql, t)
@@ -149,7 +161,7 @@ def run():
 
     conn.close()
     print("=================================================================")
-    print(f"[SUCCESS] Migration complete: {user_count} Users, {training_count} Trainings active in MySQL.")
+    print(f"[SUCCESS] Migration complete: {user_count} Users, {training_count} Trainings active in Aiven PostgreSQL.")
     print("=================================================================")
 
 if __name__ == "__main__":

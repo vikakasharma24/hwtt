@@ -7,6 +7,18 @@
 
   function getApiBaseUrl() {
     try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryApi = urlParams.get("api");
+      if (queryApi) {
+        const cleanQueryApi = queryApi.trim().replace(/\/+$/, "");
+        if (cleanQueryApi.startsWith("http")) {
+          localStorage.setItem(API_STORAGE_KEY, cleanQueryApi);
+          return cleanQueryApi;
+        }
+      }
+    } catch (_) {}
+
+    try {
       const custom = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
       if (custom) return custom.replace(/\/+$/, "");
     } catch (_) {}
@@ -288,7 +300,13 @@
           </div>
         `;
       } else {
-        list.innerHTML = queue.map((item, idx) => {
+        const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+        const notice = (isStaticDeploy && !getApiBaseUrl())
+          ? `<div style="padding:8px 10px; margin-bottom:10px; background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; font-size:12px; color:#92400e; line-height:1.4;">
+               <b>Notice:</b> Standalone mode. ${queue.length} action(s) are preserved locally. Click <b>Clear</b> above to discard test logs, or configure <b>API Server</b>.
+             </div>`
+          : "";
+        list.innerHTML = notice + queue.map((item, idx) => {
           const type = item.payload?.type || item.payload?.event || "Action";
           const title = item.payload?.trainingTitle || item.payload?.fullName || item.payload?.phone || "Data payload";
           return `
@@ -318,6 +336,23 @@
     });
   }
 
+  async function checkBackendConnectivity() {
+    const base = getApiBaseUrl();
+    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+    if (isStaticDeploy && !base) {
+      return false;
+    }
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 3500);
+      const res = await fetch(apiUrl("/api/health"), { signal: ctrl.signal });
+      clearTimeout(tid);
+      return res.ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function sendToSheet(payload, isFromQueue = false) {
     // 1. PRIMARY FAST WRITE TO AIVEN POSTGRESQL (< 5ms response time)
     if (navigator.onLine) {
@@ -332,15 +367,17 @@
           LS.set(DBK.lastSync, nowIso());
           setSyncStatus("success", `Synced with Aiven Enterprise Database (${json.latency_ms || "1"}ms)`);
           return json;
+        } else {
+          console.warn(`[Sync] /api/events/log HTTP ${apiRes.status}`);
         }
       } catch (apiErr) {
-        console.debug("Aiven API call failed, queuing action for retry:", apiErr);
+        console.warn("[Sync] /api/events/log network error:", apiErr);
       }
     }
 
     if (!isFromQueue) {
       addToQueue(payload);
-      setSyncStatus("offline_queued", "Offline or network issue: queued for Aiven cloud sync");
+      setSyncStatus("offline_queued", "Offline: queued for cloud sync");
     }
     return { ok: false, queued: true, error: "Queued for sync" };
   }
@@ -352,17 +389,27 @@
     }
 
     const queue = getQueue();
-    if (!queue.length) {
-      try {
-        const pingRes = await fetch(apiUrl("/api/health"));
-        if (pingRes.ok) {
-          showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
+    const isOnlineWithBackend = await checkBackendConnectivity();
+
+    if (!isOnlineWithBackend) {
+      const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+      if (queue.length > 0) {
+        if (isStaticDeploy && !getApiBaseUrl()) {
+          showToast(
+            `Standalone mode: ${queue.length} action(s) stored locally. Click 'Queue' -> 'Clear' to discard or set 'API Server'.`,
+            "warn",
+            6000
+          );
         } else {
-          showToast("Aiven Enterprise Database reachable with notice", "warn");
+          showToast(
+            `Backend server unreachable (${apiUrl("/api/health")}). ${queue.length} action(s) remain queued.`,
+            "warn",
+            5000
+          );
         }
-      } catch (err) {
-        if (window.location.hostname.endsWith("github.io") && !getApiBaseUrl()) {
-          showToast("GitHub Pages static mode: Click 'API Server' to connect your live cloud database", "info", 5000);
+      } else {
+        if (isStaticDeploy && !getApiBaseUrl()) {
+          showToast("Local data up to date (Standalone Mode). Configure 'API Server' to connect live backend.", "info", 5000);
         } else {
           showToast("Backend database connection offline", "warn");
         }
@@ -371,9 +418,34 @@
       return;
     }
 
+    if (!queue.length) {
+      showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
+      refreshQueueUI();
+      return;
+    }
+
     showToast(`Syncing ${queue.length} offline action(s) to Aiven Cloud DB...`, "info");
     setSyncStatus("syncing", `Syncing ${queue.length} queued action(s)...`);
 
+    // 1. Fast Batch Sync to Cloud DB
+    try {
+      const batchRes = await fetch(apiUrl("/api/events/log"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(queue.map((q) => q.payload))
+      });
+      if (batchRes.ok) {
+        const json = await batchRes.json().catch(() => ({}));
+        saveQueue([]);
+        LS.set(DBK.lastSync, nowIso());
+        setSyncStatus("success", `All ${queue.length} action(s) synced to Aiven Cloud DB (${json.latency_ms || "1"}ms)`);
+        refreshQueueUI();
+        showToast(`All ${queue.length} queued action(s) synced to Aiven Cloud DB!`, "success");
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Fallback: item-by-item sync
     const remaining = [];
     let syncedCount = 0;
 
@@ -642,60 +714,275 @@
   const seedAdmin = seedInitialUsers;
 
 
-  function seedSampleTrainings() {
-    const existing = LS.get(DBK.trainings, []);
-    if (Array.isArray(existing) && existing.length > 0) return;
+  function seedMasterTrainings() {
+    let existing = LS.get(DBK.trainings, []);
+    if (!Array.isArray(existing)) existing = [];
 
-    const sampleTrainings = [
+    const masterTrainings = [
       {
         id: "T-TB-001",
         category: "TB",
         status: "Published",
         title: "National Tuberculosis Elimination Program (NTEP) Refresher",
-        startAt: new Date(Date.now() - 3600000).toISOString(),
-        endAt: new Date(Date.now() + 86400000 * 5).toISOString(),
+        startAt: "2026-03-01T09:00:00.000Z",
+        endAt: "2026-12-31T18:00:00.000Z",
         mode: "hybrid",
         venue: "State Health Training Centre, Ranchi / Online",
         attendanceEnabled: true,
         gpsRequired: false,
-        attendanceOpenAt: new Date(Date.now() - 7200000).toISOString(),
-        attendanceCloseAt: new Date(Date.now() + 86400000 * 5).toISOString(),
+        attendanceOpenAt: "2026-03-01T08:00:00.000Z",
+        attendanceCloseAt: "2026-12-31T19:00:00.000Z",
         assessments: {
-          pre: JSON.parse(defaultPreJson()),
-          post: JSON.parse(defaultPostJson())
+          pre: [
+            { type: "MCQ", text: "What is the primary causative agent of Tuberculosis (TB)?", marks: 1, options: ["Virus", "Mycobacterium tuberculosis (Bacteria)", "Fungus", "Parasite"], correct: 1 },
+            { type: "TF", text: "Persistent cough for 2 weeks or more is a key symptom of pulmonary TB.", marks: 1, correct: true }
+          ],
+          post: [
+            { type: "MCQ", text: "Which molecular diagnostic test confirms TB and Rifampicin resistance rapidly?", marks: 1, options: ["Complete Blood Count (CBC)", "Chest X-ray", "CBNAAT / TrueNat", "Electrocardiogram (ECG)"], correct: 2 },
+            { type: "TF", text: "Early detection and complete DOTS course adherence prevent MDR-TB emergence.", marks: 1, correct: true }
+          ]
         },
-        createdAt: nowIso(),
-        updatedAt: nowIso()
+        createdAt: "2026-10-05T23:22:11.000Z",
+        updatedAt: "2026-10-05T23:22:28.000Z"
       },
       {
         id: "T-MCH-002",
         category: "Maternal Health",
         status: "Published",
         title: "Comprehensive Maternal & Newborn Health Care Protocols",
-        startAt: new Date(Date.now() - 7200000).toISOString(),
-        endAt: new Date(Date.now() + 86400000 * 7).toISOString(),
+        startAt: "2026-02-28T22:00:00.000Z",
+        endAt: "2026-12-31T07:00:00.000Z",
         mode: "physical",
         venue: "District Hospital Conference Hall",
         attendanceEnabled: true,
         gpsRequired: false,
-        attendanceOpenAt: new Date(Date.now() - 10800000).toISOString(),
-        attendanceCloseAt: new Date(Date.now() + 86400000 * 7).toISOString(),
+        attendanceOpenAt: "2026-02-28T21:00:00.000Z",
+        attendanceCloseAt: "2026-12-31T08:00:00.000Z",
         assessments: {
           pre: [
-            { type: "MCQ", text: "Minimum recommended ANC checkups during pregnancy?", marks: 1, options: ["1", "2", "4", "6"], correct: 2 },
-            { type: "TF", text: "Iron and Folic Acid (IFA) supplementation is vital.", marks: 1, correct: true }
+            { type: "MCQ", text: "What is the minimum recommended number of Antenatal Care (ANC) checkups during pregnancy?", marks: 1, options: ["1", "2", "4", "6"], correct: 2 },
+            { type: "TF", text: "Iron and Folic Acid (IFA) supplementation is vital to prevent maternal anemia.", marks: 1, correct: true }
           ],
           post: [
-            { type: "MCQ", text: "First line management for postpartum hemorrhage (PPH) includes?", marks: 1, options: ["Oxytocin administration", "Sedatives", "Antibiotics only", "No intervention"], correct: 0 },
-            { type: "TF", text: "Skin-to-skin kangaroo care stabilizes premature neonates.", marks: 1, correct: true }
+            { type: "MCQ", text: "What is the first-line medication protocol for active management of third stage of labor / PPH?", marks: 1, options: ["Oxytocin (10 IU IM)", "Sedatives", "Antibiotics only", "No intervention"], correct: 0 },
+            { type: "TF", text: "Skin-to-skin Kangaroo Mother Care (KMC) significantly improves thermal stabilization in premature neonates.", marks: 1, correct: true }
           ]
         },
-        createdAt: nowIso(),
-        updatedAt: nowIso()
+        createdAt: "2026-10-05T23:22:11.000Z",
+        updatedAt: "2026-10-06T00:55:12.000Z"
+      },
+      {
+        id: "T-IMNCI-003",
+        category: "Child Nutrition",
+        status: "Published",
+        title: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification",
+        startAt: "2026-03-01T09:00:00.000Z",
+        endAt: "2026-12-31T18:00:00.000Z",
+        mode: "online",
+        venue: "State Tele-Health Training Portal",
+        attendanceEnabled: true,
+        gpsRequired: false,
+        attendanceOpenAt: "2026-03-01T08:00:00.000Z",
+        attendanceCloseAt: "2026-12-31T19:00:00.000Z",
+        assessments: {
+          pre: [
+            { type: "MCQ", text: "What is the standard diagnostic criteria for Severe Acute Malnutrition (SAM) in children 6-59 months?", marks: 1, options: ["MUAC < 115 mm or bilateral pitting edema", "Weight-for-age < -1 SD", "Height-for-age < -2 SD", "Normal appetite only"], correct: 0 },
+            { type: "TF", text: "Bilateral pitting edema in children indicates severe complicated malnutrition requiring urgent inpatient stabilization.", marks: 1, correct: true }
+          ],
+          post: [
+            { type: "MCQ", text: "What is the initial emergency phase feeding formulation recommended for children with SAM without edema?", marks: 1, options: ["F-75 therapeutic milk", "F-100 therapeutic milk", "Whole cow milk", "High-protein solids"], correct: 0 },
+            { type: "TF", text: "Routine administration of Vitamin A is crucial during treatment of Severe Acute Malnutrition.", marks: 1, correct: true }
+          ]
+        },
+        createdAt: "2026-10-05T23:22:11.000Z",
+        updatedAt: "2026-10-06T00:38:18.000Z"
+      },
+      {
+        id: "T-UIP-004",
+        category: "Immunization",
+        status: "Draft",
+        title: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
+        startAt: "2026-03-01T03:30:00.000Z",
+        endAt: "2026-12-31T12:30:00.000Z",
+        mode: "hybrid",
+        venue: "Ranchi Medical College Auditorium",
+        attendanceEnabled: true,
+        gpsRequired: false,
+        attendanceOpenAt: "2026-03-01T02:30:00.000Z",
+        attendanceCloseAt: "2026-12-31T13:30:00.000Z",
+        assessments: {
+          pre: [
+            { type: "MCQ", text: "What is the standard recommended storage temperature range for vaccines in Ice-Lined Refrigerators (ILR)?", marks: 1, options: ["-20°C to -10°C", "+2°C to +8°C", "+15°C to +25°C", "Sub-zero freezing"], correct: 1 },
+            { type: "TF", text: "The shake test is used to detect if freeze-sensitive vaccines have suffered freezing damage.", marks: 1, correct: true }
+          ],
+          post: [
+            { type: "MCQ", text: "What is the emergency first-line drug and route for managing acute anaphylaxis at a vaccination site?", marks: 1, options: ["Oral paracetamol", "Adrenaline (1:1000 dilution) IM in anterolateral thigh", "Oral antibiotics", "Topical antiseptic"], correct: 1 },
+            { type: "TF", text: "Vaccine vials displaying Stage 3 or Stage 4 Vaccine Vial Monitor (VVM) square darker than outer circle must be discarded.", marks: 1, correct: true }
+          ]
+        },
+        createdAt: "2026-10-05T23:22:11.000Z",
+        updatedAt: "2026-10-07T10:33:33.000Z"
       }
     ];
 
-    LS.set(DBK.trainings, sampleTrainings);
+    const tMap = new Map();
+    existing.forEach((t) => tMap.set(t.id, t));
+    masterTrainings.forEach((m) => {
+      if (!tMap.has(m.id)) {
+        tMap.set(m.id, m);
+      }
+    });
+    LS.set(DBK.trainings, Array.from(tMap.values()));
+  }
+
+  const seedSampleTrainings = seedMasterTrainings;
+
+  function seedMasterAttendance() {
+    let existing = LS.get(DBK.attendance, []);
+    if (!Array.isArray(existing)) existing = [];
+
+    const masterAttendance = [
+      {
+        id: 1,
+        trainingId: "T-MCH-002",
+        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
+        workerUniqueId: "JH559304",
+        fullName: "Vikash Sharma",
+        phone: "7004369523",
+        designation: "ANM",
+        facilityName: "ratu",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-06T00:18:59.000Z"
+      },
+      {
+        id: 2,
+        trainingId: "T-IMNCI-003",
+        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
+        workerUniqueId: "JH559304",
+        fullName: "Vikash Sharma",
+        phone: "7004369523",
+        designation: "ANM",
+        facilityName: "ratu",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-06T00:46:03.000Z"
+      },
+      {
+        id: 3,
+        trainingId: "T-UIP-004",
+        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
+        workerUniqueId: "JH559304",
+        fullName: "Vikash Sharma",
+        phone: "7004369523",
+        designation: "ANM",
+        facilityName: "ratu",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-06T00:48:26.000Z"
+      },
+      {
+        id: 4,
+        trainingId: "T-TB-001",
+        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
+        workerUniqueId: "JH559304",
+        fullName: "Vikash Sharma",
+        phone: "7004369523",
+        designation: "ANM",
+        facilityName: "ratu",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-06T00:48:44.000Z"
+      },
+      {
+        id: 5,
+        trainingId: "T-IMNCI-003",
+        userId: "e547834b-1166-4e49-810c-75dc6b2af273",
+        workerUniqueId: "JH782494",
+        fullName: "Daymand",
+        phone: "9431590185",
+        designation: "CHO",
+        facilityName: "CHC Namkum",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-06T17:06:26.000Z"
+      },
+      {
+        id: 6,
+        trainingId: "T-IMNCI-003",
+        userId: "c22d679c-206b-4416-9fe1-141f967b26d8",
+        workerUniqueId: "JH176550",
+        fullName: "akshat",
+        phone: "9090909090",
+        designation: "ANM",
+        facilityName: "CHC Ormanjhi",
+        district: "Ranchi",
+        attendanceStatus: "Present",
+        checkedInAt: "2026-10-09T08:59:29.000Z"
+      }
+    ];
+
+    const attMap = new Map();
+    existing.forEach((a) => {
+      const k = `${a.trainingId}_${a.userId}`;
+      attMap.set(k, a);
+    });
+    masterAttendance.forEach((m) => {
+      const k = `${m.trainingId}_${m.userId}`;
+      if (!attMap.has(k)) {
+        attMap.set(k, m);
+      } else {
+        const item = attMap.get(k);
+        if (!item.fullName && m.fullName) item.fullName = m.fullName;
+        if (!item.workerUniqueId && m.workerUniqueId) item.workerUniqueId = m.workerUniqueId;
+        if (!item.phone && m.phone) item.phone = m.phone;
+        if (!item.designation && m.designation) item.designation = m.designation;
+        if (!item.facilityName && m.facilityName) item.facilityName = m.facilityName;
+        if (!item.district && m.district) item.district = m.district;
+      }
+    });
+    LS.set(DBK.attendance, Array.from(attMap.values()));
+  }
+
+  function seedMasterAttempts() {
+    let existing = LS.get(DBK.attempts, []);
+    if (!Array.isArray(existing)) existing = [];
+
+    const masterAttempts = [
+      { id: 1, trainingId: "T-MCH-002", trainingTitle: "Comprehensive Maternal & Newborn Health Care Protocols", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:19:08.000Z" },
+      { id: 2, trainingId: "T-MCH-002", trainingTitle: "Comprehensive Maternal & Newborn Health Care Protocols", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:20:50.000Z" },
+      { id: 3, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:46:18.000Z" },
+      { id: 4, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T00:46:50.000Z" },
+      { id: 5, trainingId: "T-TB-001", trainingTitle: "National Tuberculosis Elimination Program (NTEP) Refresher", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-06T00:53:08.000Z" },
+      { id: 6, trainingId: "T-TB-001", trainingTitle: "National Tuberculosis Elimination Program (NTEP) Refresher", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T00:53:15.000Z" },
+      { id: 7, trainingId: "T-UIP-004", trainingTitle: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-06T00:53:26.000Z" },
+      { id: 8, trainingId: "T-UIP-004", trainingTitle: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:53:54.000Z" },
+      { id: 9, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "e547834b-1166-4e49-810c-75dc6b2af273", workerUniqueId: "JH782494", fullName: "Daymand", phone: "9431590185", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T17:06:30.000Z" },
+      { id: 10, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "e547834b-1166-4e49-810c-75dc6b2af273", workerUniqueId: "JH782494", fullName: "Daymand", phone: "9431590185", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T17:06:35.000Z" },
+      { id: 11, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "c22d679c-206b-4416-9fe1-141f967b26d8", workerUniqueId: "JH176550", fullName: "akshat", phone: "9090909090", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-09T08:59:36.000Z" },
+      { id: 12, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "c22d679c-206b-4416-9fe1-141f967b26d8", workerUniqueId: "JH176550", fullName: "akshat", phone: "9090909090", type: "POST", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-09T08:59:48.000Z" }
+    ];
+
+    const atmpMap = new Map();
+    existing.forEach((a) => {
+      const k = `${a.trainingId}_${a.userId}_${(a.type || "").toUpperCase()}`;
+      atmpMap.set(k, a);
+    });
+    masterAttempts.forEach((m) => {
+      const k = `${m.trainingId}_${m.userId}_${m.type}`;
+      if (!atmpMap.has(k)) {
+        atmpMap.set(k, m);
+      } else {
+        const item = atmpMap.get(k);
+        if (!item.fullName && m.fullName) item.fullName = m.fullName;
+        if (!item.workerUniqueId && m.workerUniqueId) item.workerUniqueId = m.workerUniqueId;
+        if (!item.phone && m.phone) item.phone = m.phone;
+        if (item.score == null && m.score != null) item.score = m.score;
+        if (item.totalMarks == null && m.totalMarks != null) item.totalMarks = m.totalMarks;
+        if (item.percent == null && m.percent != null) item.percent = m.percent;
+      }
+    });
+    LS.set(DBK.attempts, Array.from(atmpMap.values()));
   }
 
   /* ==========================
@@ -738,7 +1025,7 @@
     try {
       const inputHash = await hashPassword(password);
 
-      // 1. PRIMARY FAST AUTHENTICATION AGAINST MYSQL (< 2ms)
+      // 1. PRIMARY FAST AUTHENTICATION AGAINST CLOUD DB (< 2ms)
       try {
         const res = await fetch(apiUrl("/api/auth/login"), {
           method: "POST",
@@ -900,7 +1187,7 @@
     const workerUniqueId = "JH" + String(Math.floor(100000 + Math.random() * 900000));
     const districtName = districtNameById(districtId);
 
-    // 1. PRIMARY FAST REGISTRATION IN MYSQL (< 5ms)
+    // 1. PRIMARY FAST REGISTRATION IN CLOUD DB (< 5ms)
     try {
       const res = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
@@ -1052,7 +1339,7 @@
     u.password = hashedPassword;
     LS.set(DBK.users, users);
 
-    // Primary write to MySQL users table
+    // Primary write to Cloud DB users table
     try {
       await fetch(apiUrl("/api/auth/reset-password"), {
         method: "POST",
@@ -1140,7 +1427,7 @@
 
     if (viewId === "viewAuth") fillDistrictSelect();
     if (viewId === "viewAdmin") {
-      syncFromMySQLPrimary();
+      syncFromCloudPrimary();
     }
   }
 
@@ -1149,7 +1436,7 @@
     if (!u) return setActiveView("viewAuth");
     if (u.role === ROLES.ADMIN) {
       if (window.removeRemedialBanner) window.removeRemedialBanner();
-      syncFromMySQLPrimary();
+      syncFromCloudPrimary();
       setActiveView("viewAdmin");
     } else {
       setActiveView("viewWorker");
@@ -1266,7 +1553,7 @@
     const wId = user.workerUniqueId || user.worker_unique_id || "";
     const fName = user.fullName || user.full_name || "";
 
-    // Direct Primary write to MySQL attendance table
+    // Direct Primary write to Cloud DB attendance table
     fetch(apiUrl("/api/attendance"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1550,7 +1837,7 @@
       showToast("Assessment recorded locally. Sync queued.", "info");
     }
 
-    // Submit BOTH PRE and POST tests to Flask Backend / MySQL Primary
+    // Submit BOTH PRE and POST tests to Flask Backend / Cloud DB Primary
     try {
       const timeSpentSeconds = activeTestStartTime
         ? Math.max(15, Math.round((Date.now() - activeTestStartTime) / 1000))
@@ -2283,7 +2570,7 @@
 
     LS.set(DBK.trainings, trainings);
 
-    // 1. PERSIST DIRECTLY TO MYSQL BACKEND (ACID DURABILITY)
+    // 1. PERSIST DIRECTLY TO CLOUD BACKEND (ACID DURABILITY)
     try {
       const apiRes = await fetch(apiUrl("/api/trainings"), {
         method: "POST",
@@ -2291,12 +2578,12 @@
         body: JSON.stringify(payload)
       });
       if (apiRes.ok) {
-        console.log(`[API] Training ${id} (${status}) saved to MySQL successfully.`);
+        console.log(`[API] Training ${id} (${status}) saved to Cloud DB successfully.`);
       } else {
-        console.warn("[API] Failed to save training to MySQL:", await apiRes.text());
+        console.warn("[API] Failed to save training to Cloud DB:", await apiRes.text());
       }
     } catch (apiErr) {
-      console.warn("[API] Network error saving training to MySQL:", apiErr);
+      console.warn("[API] Network error saving training to Cloud DB:", apiErr);
     }
 
     showToast(editId ? `Training updated successfully (${status})` : `New training created (${status})`, "success");
@@ -2986,12 +3273,12 @@
     // Sync button & queue panel
     byId("syncBtn")?.addEventListener("click", async () => {
       await processOfflineQueue();
-      await syncFromMySQLPrimary();
+      await syncFromCloudPrimary();
       renderAll();
     });
 
     byId("wRefreshBtn")?.addEventListener("click", async () => {
-      await syncFromMySQLPrimary();
+      await syncFromCloudPrimary();
       renderAll();
       const u = currentUser();
       if (u && window.onUserAuthorized) {
@@ -3000,6 +3287,11 @@
     });
 
     byId("viewQueueBtn")?.addEventListener("click", () => {
+      byId("queuePanel")?.classList.toggle("hidden");
+      refreshQueueUI();
+    });
+
+    byId("pendingBadge")?.addEventListener("click", () => {
       byId("queuePanel")?.classList.toggle("hidden");
       refreshQueueUI();
     });
@@ -3019,7 +3311,7 @@
           localStorage.removeItem(API_STORAGE_KEY);
           showToast("Reset to default relative API paths.", "info");
         }
-        syncFromMySQLPrimary();
+        syncFromCloudPrimary();
       }
     });
 
@@ -3029,7 +3321,7 @@
 
     byId("queueSyncNowBtn")?.addEventListener("click", async () => {
       await processOfflineQueue();
-      await syncFromMySQLPrimary();
+      await syncFromCloudPrimary();
       renderAll();
     });
 
@@ -3103,9 +3395,22 @@
     }
   }
 
-  async function syncFromMySQLPrimary() {
+  async function syncFromCloudPrimary() {
+    const base = getApiBaseUrl();
+    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+    if (isStaticDeploy && !base) {
+      console.info("[Portal] Standalone PWA mode: master cloud dataset active.");
+      seedDistricts();
+      await seedAdmin();
+      seedMasterTrainings();
+      seedMasterAttendance();
+      seedMasterAttempts();
+      renderAll();
+      return;
+    }
+
     try {
-      // 1. DYNAMIC PRIMARY SYNC: USERS FROM MYSQL
+      // 1. DYNAMIC PRIMARY SYNC: USERS FROM CLOUD DB
       try {
         const uRes = await fetch(apiUrl("/api/users"));
         if (uRes.ok) {
@@ -3151,7 +3456,7 @@
         console.debug("Backend users sync error:", err);
       }
 
-      // 2. DYNAMIC PRIMARY SYNC: TRAININGS FROM MYSQL
+      // 2. DYNAMIC PRIMARY SYNC: TRAININGS FROM CLOUD DB
       try {
         const res = await fetch(apiUrl("/api/trainings"));
         if (res.ok) {
@@ -3183,7 +3488,7 @@
         console.debug("Backend trainings sync error:", err);
       }
 
-      // 3. DYNAMIC PRIMARY SYNC: ATTENDANCE FROM MYSQL
+      // 3. DYNAMIC PRIMARY SYNC: ATTENDANCE FROM CLOUD DB
       try {
         const attRes = await fetch(apiUrl("/api/attendance"));
         if (attRes.ok) {
@@ -3216,7 +3521,7 @@
         console.debug("Backend attendance sync error:", err);
       }
 
-      // 4. DYNAMIC PRIMARY SYNC: ATTEMPTS FROM MYSQL
+      // 4. DYNAMIC PRIMARY SYNC: ATTEMPTS FROM CLOUD DB
       try {
         const atmpRes = await fetch(apiUrl("/api/attempts"));
         if (atmpRes.ok) {
@@ -3264,9 +3569,12 @@
 
       renderAll();
     } catch (e) {
-      console.debug("Backend MySQL primary sync error:", e);
+      console.warn("Backend Cloud DB primary sync error:", e);
     }
   }
+  const syncFromMySQLPrimary = syncFromCloudPrimary;
+  window.syncFromCloudPrimary = syncFromCloudPrimary;
+  window.syncFromMySQLPrimary = syncFromCloudPrimary;
 
   async function init() {
     // 1. Always wire interactive events immediately so buttons never become unresponsive
@@ -3285,7 +3593,9 @@
     try {
       seedDistricts();
       await seedAdmin();
-      seedSampleTrainings();
+      seedMasterTrainings();
+      seedMasterAttendance();
+      seedMasterAttempts();
       clearTrainingForm();
       setOnlineBadge();
     } catch (e) {
@@ -3311,7 +3621,7 @@
     }
 
     try {
-      syncFromMySQLPrimary();
+      syncFromCloudPrimary();
     } catch (e) {
       console.debug("Initial primary sync notice:", e);
     }

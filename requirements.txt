@@ -9,7 +9,6 @@ joblib==1.6.0
 MarkupSafe==3.0.4
 narwhals==2.26.0
 numpy==2.5.3
-PyMySQL==1.2.3
 scikit-learn==1.9.1
 scipy==1.18.1
 threadpoolctl==3.7.0

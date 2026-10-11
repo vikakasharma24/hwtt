@@ -1,17 +1,18 @@
 """
 ==============================================================================
-AIVEN.IO POSTGRESQL ENTERPRISE MIGRATION SCRIPT
+AIVEN.IO POSTGRESQL ENTERPRISE MIGRATION & SEEDING SCRIPT (setup_aiven_db.py)
 ==============================================================================
-Creates enterprise schema in Aiven PostgreSQL and migrates all existing 
-records from local MySQL (if available) or seeds default enterprise dataset.
+Creates enterprise schema in Aiven PostgreSQL, builds compatibility views
+for Linux case-sensitivity, and populates master enterprise datasets
+completely decoupled from desktop MySQL.
 ==============================================================================
 """
 
 import os
+import sys
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import pymysql
 
 try:
     from dotenv import load_dotenv
@@ -32,15 +33,9 @@ if not AIVEN_URI:
     else:
         AIVEN_URI = ""
 
-MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_DB = os.getenv("MYSQL_DB", "jh_health_db")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", 3306))
-
 
 def create_schema(pg_conn):
-    print(">> [1/3] Creating Enterprise Tables on Aiven PostgreSQL...")
+    print(">> [1/3] Creating Enterprise Tables and Compatibility Views in Aiven PostgreSQL...")
     ddl = """
     CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(64) PRIMARY KEY,
@@ -178,180 +173,135 @@ def create_schema(pg_conn):
     );
     CREATE INDEX IF NOT EXISTS idx_event_type ON event_logs(event_type);
     CREATE INDEX IF NOT EXISTS idx_event_worker ON event_logs(worker_unique_id);
+
+    -- Linux Case-Sensitivity Compatibility Views
+    CREATE OR REPLACE VIEW training AS SELECT * FROM trainings;
+    CREATE OR REPLACE VIEW "Training" AS SELECT * FROM trainings;
+    CREATE OR REPLACE VIEW "Trainings" AS SELECT * FROM trainings;
+    CREATE OR REPLACE VIEW "Attendance" AS SELECT * FROM attendance;
+    CREATE OR REPLACE VIEW "Users" AS SELECT * FROM users;
+    CREATE OR REPLACE VIEW "Attempts" AS SELECT * FROM attempts;
+    CREATE OR REPLACE VIEW "Assessments" AS SELECT * FROM assessments;
     """
     with pg_conn.cursor() as cur:
         cur.execute(ddl)
     pg_conn.commit()
-    print("   [OK] Tables and indexes created successfully.")
+    print("   [OK] Tables, indexes, and compatibility views active.")
 
 
-def migrate_mysql_data(pg_conn):
-    print(">> [2/3] Extracting data from local MySQL for migration to Aiven...")
-    try:
-        my_conn = pymysql.connect(
-            host=MYSQL_HOST,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DB,
-            port=MYSQL_PORT,
-            cursorclass=pymysql.cursors.DictCursor
-        )
-    except Exception as e:
-        print(f"   [WARN] Could not connect to local MySQL ({e}). Skipping data copy.")
-        return
-
-    with my_conn.cursor() as my_cur, pg_conn.cursor() as pg_cur:
+def seed_enterprise_data(pg_conn):
+    print(">> [2/3] Seeding master enterprise records into Aiven PostgreSQL...")
+    with pg_conn.cursor() as cur:
         # 1. Users
-        my_cur.execute("SELECT * FROM users;")
-        users = my_cur.fetchall()
+        users = [
+            ("0015fc58-c17d-4155-94ee-9226d9c6696b", "ADMIN-000001", "9999999999", "1d9774659b8ebbd51ee41718ecae8f8d689fb8c582845c43734a697779b5b9e5", "ADMIN", "State Admin", "State Health Administrator", "NHM HQ", "State HQ", "Ranchi", "D-20", "Ranchi", "Jharkhand", 1),
+            ("88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "7004369523", "571f998ac5e2777531f46e7669b8c64c1d1850107c46ed467ea7a1a53095384b", "WORKER", "Vikash Sharma", "ANM", "ratu", "Other", "ratu", "D-20", "Ranchi", "Jharkhand", 1),
+            ("c22d679c-206b-4416-9fe1-141f967b26d8", "JH176550", "9090909090", "885cfffd9b9591a1049d2247aaec5b28c269e841fb852a8a9071109960a36c9f", "WORKER", "akshat", "ANM", "CHC Ormanjhi", "CHC", "Ranchi", "D-20", "Ranchi", "Jharkhand", 1),
+            ("e547834b-1166-4e49-810c-75dc6b2af273", "JH782494", "9431590185", "571f998ac5e2777531f46e7669b8c64c1d1850107c46ed467ea7a1a53095384b", "WORKER", "Daymand", "CHO", "CHC Namkum", "CHC", "Namkum", "D-20", "Ranchi", "Jharkhand", 1)
+        ]
         for u in users:
-            pg_cur.execute("""
+            cur.execute("""
                 INSERT INTO users 
-                    (id, worker_unique_id, phone, password_hash, role, full_name,
-                     designation, facility_name, facility_type, city_or_village,
-                     district_id, district_name, state, is_active, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    full_name = EXCLUDED.full_name,
-                    designation = EXCLUDED.designation,
-                    facility_name = EXCLUDED.facility_name,
-                    district_name = EXCLUDED.district_name,
-                    updated_at = CURRENT_TIMESTAMP;
-            """, (
-                u["id"], u["worker_unique_id"], u["phone"], u["password_hash"],
-                u["role"], u["full_name"], u["designation"], u["facility_name"],
-                u["facility_type"], u["city_or_village"], u["district_id"],
-                u["district_name"], u["state"], u.get("is_active", 1),
-                u.get("created_at"), u.get("updated_at")
-            ))
-        print(f"   [MIGRATED] {len(users)} users.")
+                    (id, worker_unique_id, phone, password_hash, role, full_name, designation, facility_name, facility_type, city_or_village, district_id, district_name, state, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, phone = EXCLUDED.phone;
+            """, u)
+        print(f"   [SEEDED] {len(users)} users.")
 
         # 2. Trainings
-        my_cur.execute("SELECT * FROM trainings;")
-        trainings = my_cur.fetchall()
+        trainings = [
+            ("T-TB-001", "TB", "Published", "National Tuberculosis Elimination Program (NTEP) Refresher", "hybrid", "State Health Training Centre, Ranchi / Online", "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0, "2026-03-01 08:00:00", "2026-12-31 19:00:00", json.dumps({"pre": [{"type": "MCQ", "text": "What is the primary causative agent of Tuberculosis (TB)?", "marks": 1, "options": ["Virus", "Mycobacterium tuberculosis (Bacteria)", "Fungus", "Parasite"], "correct": 1}, {"type": "TF", "text": "Persistent cough for 2 weeks or more is a key symptom of pulmonary TB.", "marks": 1, "correct": True}], "post": [{"type": "MCQ", "text": "Which molecular diagnostic test confirms TB and Rifampicin resistance rapidly?", "marks": 1, "options": ["Complete Blood Count (CBC)", "Chest X-ray", "CBNAAT / TrueNat", "Electrocardiogram (ECG)"], "correct": 2}, {"type": "TF", "text": "Early detection and complete DOTS course adherence prevent MDR-TB emergence.", "marks": 1, "correct": True}]})),
+            ("T-MCH-002", "Maternal Health", "Published", "Comprehensive Maternal & Newborn Health Care Protocols", "physical", "District Hospital Conference Hall", "2026-02-28 22:00:00", "2026-12-31 07:00:00", 1, 0, "2026-02-28 21:00:00", "2026-12-31 08:00:00", json.dumps({"pre": [{"type": "MCQ", "text": "What is the minimum recommended number of Antenatal Care (ANC) checkups during pregnancy?", "marks": 1, "options": ["1", "2", "4", "6"], "correct": 2}, {"type": "TF", "text": "Iron and Folic Acid (IFA) supplementation is vital to prevent maternal anemia.", "marks": 1, "correct": True}], "post": [{"type": "MCQ", "text": "What is the first-line medication protocol for active management of third stage of labor / PPH?", "marks": 1, "options": ["Oxytocin (10 IU IM)", "Sedatives", "Antibiotics only", "No intervention"], "correct": 0}, {"type": "TF", "text": "Skin-to-skin Kangaroo Mother Care (KMC) significantly improves thermal stabilization in premature neonates.", "marks": 1, "correct": True}]})),
+            ("T-IMNCI-003", "Child Nutrition", "Published", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "online", "State Tele-Health Training Portal", "2026-03-01 09:00:00", "2026-12-31 18:00:00", 1, 0, "2026-03-01 08:00:00", "2026-12-31 19:00:00", None),
+            ("T-UIP-004", "Immunization", "Published", "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "hybrid", "Ranchi Medical College Auditorium", "2026-03-01 03:30:00", "2026-12-31 12:30:00", 1, 0, "2026-03-01 02:30:00", "2026-12-31 13:30:00", json.dumps({"pre": [{"type": "MCQ", "text": "What is the standard recommended storage temperature range for vaccines in Ice-Lined Refrigerators (ILR)?", "marks": 1, "options": ["-20°C to -10°C", "+2°C to +8°C", "+15°C to +25°C", "Sub-zero freezing"], "correct": 1}, {"type": "TF", "text": "The shake test is used to detect if freeze-sensitive vaccines (e.g. Pentavalent, Td, Hepatitis B) have suffered freezing damage.", "marks": 1, "correct": True}], "post": [{"type": "MCQ", "text": "What is the emergency first-line drug and route for managing acute anaphylaxis at a vaccination session site?", "marks": 1, "options": ["Oral paracetamol", "Adrenaline (1:1000 dilution) Intramuscular (IM) in anterolateral thigh", "Oral antibiotics", "Topical antiseptic"], "correct": 1}, {"type": "TF", "text": "Vaccine vials displaying Stage 3 or Stage 4 Vaccine Vial Monitor (VVM) square darker than outer circle must be discarded.", "marks": 1, "correct": True}]}))
+        ]
         for t in trainings:
-            assess_json = t["assessments_json"]
-            if isinstance(assess_json, (dict, list)):
-                assess_json = json.dumps(assess_json)
-            pg_cur.execute("""
+            cur.execute("""
                 INSERT INTO trainings
-                    (id, category, status, title, mode, venue, start_at, end_at,
-                     attendance_enabled, gps_required, attendance_open_at, attendance_close_at,
-                     assessments_json, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = EXCLUDED.title,
-                    status = EXCLUDED.status,
-                    updated_at = CURRENT_TIMESTAMP;
-            """, (
-                t["id"], t["category"], t["status"], t["title"], t["mode"], t["venue"],
-                t["start_at"], t["end_at"], t["attendance_enabled"], t["gps_required"],
-                t["attendance_open_at"], t["attendance_close_at"], assess_json,
-                t.get("created_at"), t.get("updated_at")
-            ))
-        print(f"   [MIGRATED] {len(trainings)} trainings.")
+                    (id, category, status, title, mode, venue, start_at, end_at, attendance_enabled, gps_required, attendance_open_at, attendance_close_at, assessments_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, status = EXCLUDED.status;
+            """, t)
+        print(f"   [SEEDED] {len(trainings)} trainings.")
 
         # 3. Attendance
-        my_cur.execute("SELECT * FROM attendance;")
-        atts = my_cur.fetchall()
+        atts = [
+            ("T-MCH-002", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "Present", "2026-10-06 00:18:59"),
+            ("T-IMNCI-003", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "Present", "2026-10-06 00:46:03"),
+            ("T-UIP-004", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "Present", "2026-10-06 00:48:26"),
+            ("T-TB-001", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "Present", "2026-10-06 00:48:44"),
+            ("T-IMNCI-003", "e547834b-1166-4e49-810c-75dc6b2af273", "JH782494", "Daymand", "9431590185", "CHO", "CHC Namkum", "Ranchi", "Present", "2026-10-06 17:06:26")
+        ]
         for a in atts:
-            pg_cur.execute("""
+            cur.execute("""
                 INSERT INTO attendance
-                    (training_id, user_id, worker_unique_id, full_name, phone,
-                     designation, facility_name, district_name, status, checked_in_at)
+                    (training_id, user_id, worker_unique_id, full_name, phone, designation, facility_name, district_name, status, checked_in_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (training_id, user_id) DO UPDATE SET
-                    status = EXCLUDED.status;
-            """, (
-                a["training_id"], a["user_id"], a["worker_unique_id"], a["full_name"],
-                a["phone"], a["designation"], a["facility_name"], a["district_name"],
-                a["status"], a.get("checked_in_at")
-            ))
-        print(f"   [MIGRATED] {len(atts)} attendance records.")
+                ON CONFLICT (training_id, user_id) DO UPDATE SET status = EXCLUDED.status;
+            """, a)
+        print(f"   [SEEDED] {len(atts)} attendance records.")
 
         # 4. Attempts
-        my_cur.execute("SELECT * FROM attempts;")
-        attempts = my_cur.fetchall()
-        for atmp in attempts:
-            pg_cur.execute("""
-                INSERT INTO attempts
-                    (training_id, training_title, user_id, worker_unique_id, full_name,
-                     phone, designation, facility_name, district_name, test_type,
-                     score, total_marks, percent, passed, answers_json, submitted_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """, (
-                atmp["training_id"], atmp["training_title"], atmp["user_id"],
-                atmp["worker_unique_id"], atmp["full_name"], atmp["phone"],
-                atmp["designation"], atmp["facility_name"], atmp["district_name"],
-                atmp["test_type"], atmp["score"], atmp["total_marks"], atmp["percent"],
-                atmp["passed"], atmp["answers_json"], atmp.get("submitted_at")
-            ))
-        print(f"   [MIGRATED] {len(attempts)} test attempts.")
+        cur.execute("SELECT COUNT(*) FROM attempts;")
+        if cur.fetchone()[0] == 0:
+            attempts = [
+                ("T-MCH-002", "Comprehensive Maternal & Newborn Health Care Protocols", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "pre", 1.0, 2.0, 50.0, 0, None, "2026-10-06 00:19:08"),
+                ("T-MCH-002", "Comprehensive Maternal & Newborn Health Care Protocols", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "post", 1.0, 2.0, 50.0, 0, None, "2026-10-06 00:20:50"),
+                ("T-IMNCI-003", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "pre", 1.0, 2.0, 50.0, 0, None, "2026-10-06 00:46:18"),
+                ("T-IMNCI-003", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "post", 2.0, 2.0, 100.0, 1, None, "2026-10-06 00:46:50"),
+                ("T-TB-001", "National Tuberculosis Elimination Program (NTEP) Refresher", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "pre", 0.0, 2.0, 0.0, 0, None, "2026-10-06 00:53:08"),
+                ("T-TB-001", "National Tuberculosis Elimination Program (NTEP) Refresher", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "post", 2.0, 2.0, 100.0, 1, None, "2026-10-06 00:53:15"),
+                ("T-UIP-004", "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "pre", 0.0, 2.0, 0.0, 0, None, "2026-10-06 00:53:26"),
+                ("T-UIP-004", "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "Vikash Sharma", "7004369523", "ANM", "ratu", "Ranchi", "post", 1.0, 2.0, 50.0, 0, None, "2026-10-06 00:53:54"),
+                ("T-IMNCI-003", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "e547834b-1166-4e49-810c-75dc6b2af273", "JH782494", "Daymand", "9431590185", "CHO", "CHC Namkum", "Ranchi", "pre", 1.0, 2.0, 50.0, 0, None, "2026-10-06 17:06:30"),
+                ("T-IMNCI-003", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", "e547834b-1166-4e49-810c-75dc6b2af273", "JH782494", "Daymand", "9431590185", "CHO", "CHC Namkum", "Ranchi", "post", 2.0, 2.0, 100.0, 1, None, "2026-10-06 17:06:35")
+            ]
+            for atmp in attempts:
+                cur.execute("""
+                    INSERT INTO attempts
+                        (training_id, training_title, user_id, worker_unique_id, full_name, phone, designation, facility_name, district_name, test_type, score, total_marks, percent, passed, answers_json, submitted_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                """, atmp)
+            print(f"   [SEEDED] {len(attempts)} test attempts.")
+        else:
+            print("   [INFO] Attempts table already populated, skipping seed.")
 
         # 5. Assessments
-        my_cur.execute("SELECT * FROM assessments;")
-        assessments = my_cur.fetchall()
-        for asm in assessments:
-            pg_cur.execute("""
-                INSERT INTO assessments
-                    (user_id, module_name, pre_test_score, post_test_score, time_spent_seconds, percent, passed, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-            """, (
-                asm["user_id"], asm["module_name"], asm["pre_test_score"],
-                asm["post_test_score"], asm["time_spent_seconds"], asm["percent"],
-                asm["passed"], asm.get("created_at")
-            ))
-        print(f"   [MIGRATED] {len(assessments)} AI assessment telemetry records.")
+        cur.execute("SELECT COUNT(*) FROM assessments;")
+        if cur.fetchone()[0] == 0:
+            assessments = [
+                ("JH559304", "Comprehensive Maternal & Newborn Health Care Protocols", 50.0, 50.0, 15, 50.0, 0, "2026-10-06 00:20:50"),
+                ("JH559304", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", 50.0, 100.0, 15, 100.0, 1, "2026-10-06 00:46:50"),
+                ("JH559304", "National Tuberculosis Elimination Program (NTEP) Refresher", 0.0, 100.0, 15, 100.0, 1, "2026-10-06 00:53:15"),
+                ("JH559304", "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", 0.0, 50.0, 18, 50.0, 0, "2026-10-06 00:53:54"),
+                ("JH782494", "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", 50.0, 100.0, 15, 100.0, 1, "2026-10-06 17:06:35")
+            ]
+            for asm in assessments:
+                cur.execute("""
+                    INSERT INTO assessments
+                        (user_id, module_name, pre_test_score, post_test_score, time_spent_seconds, percent, passed, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """, asm)
+            print(f"   [SEEDED] {len(assessments)} AI assessment telemetry records.")
+        else:
+            print("   [INFO] Assessments table already populated, skipping seed.")
 
         # 6. AI Recommendations
-        my_cur.execute("SELECT * FROM ai_remedial_recommendations;")
-        recs = my_cur.fetchall()
+        recs = [
+            ("JH559304", "Comprehensive Maternal & Newborn Health Care Protocols", "High", "TOPIC-MH-PPH-03", "Emergency Obstetric Protocol: Active Management of PPH & Oxytocin Use", "https://assets.nhm.gov.in/training/maternal_health_pph_emergency.mp4", 1.0, 1.0, 0, "2026-10-06 00:20:50"),
+            ("JH559304", "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", "High", "TOPIC-UIP-COLD-04", "Cold Chain Logistics, Temperature Maintenance & Anaphylaxis Protocol", "https://assets.nhm.gov.in/training/uip_cold_chain_management.mp4", 1.0, 0.5, 0, "2026-10-06 00:53:54")
+        ]
         for r in recs:
-            pg_cur.execute("""
+            cur.execute("""
                 INSERT INTO ai_remedial_recommendations
-                    (user_id, module_name, predicted_risk_level, recommended_topic_id,
-                     remedial_title, remedial_video_url, confidence_score, historical_failure_density,
-                     is_resolved, created_at, updated_at)
+                    (user_id, module_name, predicted_risk_level, recommended_topic_id, remedial_title, remedial_video_url, confidence_score, historical_failure_density, is_resolved, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, module_name) DO UPDATE SET
-                    predicted_risk_level = EXCLUDED.predicted_risk_level,
-                    is_resolved = EXCLUDED.is_resolved;
-            """, (
-                r["user_id"], r["module_name"], r["predicted_risk_level"],
-                r["recommended_topic_id"], r["remedial_title"], r["remedial_video_url"],
-                r["confidence_score"], r["historical_failure_density"],
-                r["is_resolved"], r.get("created_at"), r.get("updated_at")
-            ))
-        print(f"   [MIGRATED] {len(recs)} AI recommendations.")
-
-        # 7. Event logs
-        my_cur.execute("SELECT * FROM event_logs;")
-        logs = my_cur.fetchall()
-        for l in logs:
-            p_json = l["payload_json"]
-            if isinstance(p_json, str):
-                try:
-                    p_json = json.loads(p_json)
-                except Exception:
-                    p_json = {}
-            p_json_str = json.dumps(p_json) if p_json else None
-            pg_cur.execute("""
-                INSERT INTO event_logs
-                    (timestamp, event_type, actor_role, actor_id, actor_name, actor_phone,
-                     worker_unique_id, full_name, designation, facility_name, facility_type,
-                     city_or_village, district, payload_json, synced_to_sheets, synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, 1, %s);
-            """, (
-                l.get("timestamp"), l["event_type"], l["actor_role"], l["actor_id"],
-                l["actor_name"], l["actor_phone"], l["worker_unique_id"], l["full_name"],
-                l["designation"], l["facility_name"], l["facility_type"],
-                l["city_or_village"], l["district"], p_json_str, l.get("synced_at")
-            ))
-        print(f"   [MIGRATED] {len(logs)} audit event logs.")
+                ON CONFLICT (user_id, module_name) DO UPDATE SET predicted_risk_level = EXCLUDED.predicted_risk_level;
+            """, (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[9]))
+        print(f"   [SEEDED] {len(recs)} AI recommendations.")
 
     pg_conn.commit()
-    my_conn.close()
-    print("   [OK] All records committed to Aiven PostgreSQL.")
+    print("   [OK] All master records successfully committed to Aiven PostgreSQL.")
 
 
 def verify(pg_conn):
@@ -365,17 +315,28 @@ def verify(pg_conn):
 def main():
     print("=================================================================")
     print(" CONNECTING TO AIVEN POSTGRESQL")
-    print(f" URI: {AIVEN_URI.split('@')[1] if '@' in AIVEN_URI else AIVEN_URI}")
+    if not AIVEN_URI:
+        print("[ERROR] DATABASE_URL or PG* variables not configured in .env")
+        return 1
+    safe_uri = AIVEN_URI.split("@")[1] if "@" in AIVEN_URI else AIVEN_URI
+    print(f" Target Server: {safe_uri}")
     print("=================================================================")
-    conn = psycopg2.connect(AIVEN_URI)
+    try:
+        conn = psycopg2.connect(AIVEN_URI)
+    except Exception as e:
+        print(f"[ERROR] Failed to connect to Aiven Cloud PostgreSQL: {e}")
+        print("Please verify the Aiven password in your .env file.")
+        return 1
+
     try:
         create_schema(conn)
-        migrate_mysql_data(conn)
+        seed_enterprise_data(conn)
         verify(conn)
-        print("\n>> ENTERPRISE MIGRATION TO AIVEN.IO COMPLETE!")
+        print("\n>> AIVEN ENTERPRISE DATABASE INITIALIZATION COMPLETE!")
+        return 0
     finally:
         conn.close()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
