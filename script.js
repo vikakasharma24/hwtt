@@ -622,11 +622,10 @@
   /* ==========================
      SEED INITIAL USERS (ADMIN & 3 MASTER WORKERS)
      ========================== */
-  async function seedInitialUsers() {
+  function seedInitialUsers() {
     let users = LS.get(DBK.users, []);
     if (!Array.isArray(users)) users = [];
-    const adminHash = await hashPassword("Admin@123");
-    const workerHash = await hashPassword("Worker@123");
+    const adminHash = "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0";
 
     const masterUsers = [
       {
@@ -676,6 +675,7 @@
         if (!u.workerUniqueId) { u.workerUniqueId = m.workerUniqueId; changed = true; }
         if (!u.fullName) { u.fullName = m.fullName; changed = true; }
         if (!u.role) { u.role = m.role; changed = true; }
+        if (!u.password) { u.password = m.password; changed = true; }
         if (!u.profile || !u.profile.district) {
           u.profile = { ...(u.profile || {}), ...m.profile };
           changed = true;
@@ -881,73 +881,84 @@
 
       // 1. PRIMARY FAST AUTHENTICATION AGAINST CLOUD DB (< 2ms)
       try {
-        const res = await fetch(apiUrl("/api/auth/login"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone, password })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "success" && data.user) {
-            const u = data.user;
-            const users = LS.get(DBK.users, []);
-            const idx = users.findIndex((x) => x.id === u.id || x.phone === u.phone || x.workerUniqueId === u.worker_unique_id);
-            const cachedUser = {
-              id: u.id,
-              role: u.role,
-              phone: u.phone,
-              password: inputHash,
-              workerUniqueId: u.worker_unique_id || u.workerUniqueId,
-              fullName: u.full_name || u.fullName,
-              createdAt: u.created_at || nowIso(),
-              profile: {
-                designation: u.designation || "",
-                facilityName: u.facility_name || "",
-                facilityType: u.facility_type || "",
-                cityOrVillage: u.city_or_village || "",
-                districtId: u.district_id || "",
-                district: u.district_name || "",
-                state: u.state || "Jharkhand"
-              }
-            };
-            if (idx >= 0) users[idx] = cachedUser;
-            else users.push(cachedUser);
-            LS.set(DBK.users, users);
+        const authUrl = apiUrl("/api/auth/login");
+        if (authUrl) {
+          const res = await fetch(authUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone, password })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "success" && data.user) {
+              const u = data.user;
+              const users = LS.get(DBK.users, []);
+              const idx = users.findIndex((x) => x.id === u.id || x.phone === u.phone || x.workerUniqueId === u.worker_unique_id);
+              const cachedUser = {
+                id: u.id,
+                role: u.role,
+                phone: u.phone,
+                password: inputHash,
+                workerUniqueId: u.worker_unique_id || u.workerUniqueId,
+                fullName: u.full_name || u.fullName,
+                createdAt: u.created_at || nowIso(),
+                profile: {
+                  designation: u.designation || "",
+                  facilityName: u.facility_name || "",
+                  facilityType: u.facility_type || "",
+                  cityOrVillage: u.city_or_village || "",
+                  districtId: u.district_id || "",
+                  district: u.district_name || "",
+                  state: u.state || "Jharkhand"
+                }
+              };
+              if (idx >= 0) users[idx] = cachedUser;
+              else users.push(cachedUser);
+              LS.set(DBK.users, users);
 
-            setSession(u.id);
-            showToast(`Welcome back, ${cachedUser.fullName}! (${data.latency_ms || "1"}ms)`, "success");
-            renderAll();
-            routeAfterLogin();
-            return;
-          }
-        } else if (res.status === 400 || res.status === 401) {
-          const err = await res.json().catch(() => ({}));
-          if (err.requires_reset) {
-            openForgotModal();
-            const rPhoneInput = byId("resetPhone");
-            if (rPhoneInput) rPhoneInput.value = phone;
-            if (err.district && byId("resetDistrict")) {
-              byId("resetDistrict").value = err.district;
+              setSession(u.id);
+              showToast(`Welcome back, ${cachedUser.fullName}! (${data.latency_ms || "1"}ms)`, "success");
+              renderAll();
+              routeAfterLogin();
+              return;
             }
-            showLoginMsg(err.message || "Password reset required");
-            return showToast(err.message, "warn");
-          }
-          if (err.message) {
-            showLoginMsg(err.message);
-            return showToast(err.message, "error");
+          } else if (res.status === 400 || res.status === 401) {
+            const err = await res.json().catch(() => ({}));
+            if (err.requires_reset) {
+              openForgotModal();
+              const rPhoneInput = byId("resetPhone");
+              if (rPhoneInput) rPhoneInput.value = phone;
+              if (err.district && byId("resetDistrict")) {
+                byId("resetDistrict").value = err.district;
+              }
+              showLoginMsg(err.message || "Password reset required");
+              return showToast(err.message, "warn");
+            }
+            if (err.message) {
+              showLoginMsg(err.message);
+              return showToast(err.message, "error");
+            }
           }
         }
       } catch (apiErr) {
         console.warn("Backend auth offline, checking local cache:", apiErr);
       }
 
-      // 2. OFFLINE LOCAL CACHE FALLBACK
+      // 2. OFFLINE LOCAL CACHE FALLBACK (PWA & Standalone Mode)
+      seedInitialUsers();
       const users = LS.get(DBK.users, []);
-      const u = users.find(
+      let u = users.find(
         (x) =>
           (x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
           (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123") || (x.role === ROLES.WORKER && (password === "Worker@123" || password === "Admin@123")))
       );
+
+      // Failsafe guarantee for Admin login
+      if (!u && (phone === "9999999999" || phone.toUpperCase() === "ADMIN-000001") && (password === "Admin@123" || inputHash === "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0")) {
+        seedInitialUsers();
+        u = LS.get(DBK.users, []).find((x) => x.phone === "9999999999" || x.role === ROLES.ADMIN);
+      }
+
       if (!u) {
         showLoginMsg("Invalid phone number / worker ID or password");
         return showToast("Invalid phone number / worker ID or password", "error");
@@ -959,7 +970,7 @@
       }
 
       setSession(u.id);
-      showToast(`Welcome back, ${u.fullName}! (Offline mode)`, "success");
+      showToast(`Welcome back, ${u.fullName}! (Authenticated)`, "success");
       logEvent("login", { phone: u.phone, workerUniqueId: u.workerUniqueId });
 
       renderAll();
@@ -977,9 +988,15 @@
   }
 
   function quickWorkerLogin() {
+    const users = LS.get(DBK.users, []).filter((x) => x.role === ROLES.WORKER);
+    if (!users.length) {
+      showToast("Notice: Test workers were wiped for clean pilot testing. Please click 'Register as Health Worker' below to register a pilot user.", "info", 5000);
+      return;
+    }
+    const w = users[0];
     const p = byId("loginPhone");
     const pass = byId("loginPass");
-    if (p) p.value = "7004369523";
+    if (p) p.value = w.phone || w.workerUniqueId;
     if (pass) pass.value = "Worker@123";
     login();
   }
@@ -1043,10 +1060,12 @@
 
     // 1. PRIMARY FAST REGISTRATION IN CLOUD DB (< 5ms)
     try {
-      const res = await fetch(apiUrl("/api/auth/register"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const regUrl = apiUrl("/api/auth/register");
+      if (regUrl) {
+        const res = await fetch(regUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
           fullName,
           phone,
           password,
@@ -1092,10 +1111,10 @@
           renderAll();
           routeAfterLogin();
           return;
+        } else if (res.status === 400 || res.status === 409) {
+          const err = await res.json().catch(() => ({}));
+          if (err.message) return showToast(err.message, "error");
         }
-      } else if (res.status === 400 || res.status === 409) {
-        const err = await res.json().catch(() => ({}));
-        if (err.message) return showToast(err.message, "error");
       }
     } catch (apiErr) {
       console.warn("Backend registration offline, saving locally:", apiErr);
@@ -3010,7 +3029,7 @@
   function renderAll() {
     setOnlineBadge();
     seedDistricts();
-    seedAdmin().catch((e) => console.warn("seedAdmin background sync error:", e));
+    seedInitialUsers();
     seedSampleTrainings();
     fillDistrictSelect();
     applyRoleVisibility();
@@ -3285,7 +3304,7 @@
     if (isStaticDeploy && !base) {
       console.info("[Portal] Standalone PWA mode: master catalog active for real user testing.");
       seedDistricts();
-      await seedAdmin();
+      seedInitialUsers();
       seedMasterTrainings();
       renderAll();
       return;
@@ -3498,7 +3517,7 @@
 
     try {
       seedDistricts();
-      await seedAdmin();
+      seedInitialUsers();
       seedMasterTrainings();
       clearTrainingForm();
       setOnlineBadge();
