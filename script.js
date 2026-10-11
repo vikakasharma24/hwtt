@@ -380,14 +380,6 @@
   }
 
   async function sendToSheet(payload, isFromQueue = false) {
-    const base = getApiBaseUrl();
-    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
-
-    // In standalone static mode with no backend configured, do not accumulate stuck offline queue items
-    if (isStaticDeploy && !base) {
-      return { ok: true, standalone: true };
-    }
-
     // 1. PRIMARY FAST WRITE TO AIVEN POSTGRESQL (< 5ms response time)
     if (navigator.onLine) {
       const url = apiUrl("/api/events/log");
@@ -419,56 +411,27 @@
     return { ok: false, queued: true, error: "Queued for sync" };
   }
 
-  async function processOfflineQueue() {
+  async function processOfflineQueue(silent = false) {
     if (!navigator.onLine) {
-      showToast("Cannot sync: device is currently offline", "warn");
+      if (!silent) showToast("Cannot sync: device is currently offline", "warn");
       return;
     }
 
-    const base = getApiBaseUrl();
-    const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
     const queue = getQueue();
-
-    // Case 1: Standalone PWA Mode on GitHub Pages without external backend
-    if (isStaticDeploy && !base) {
-      if (queue.length > 0) {
-        saveQueue([]);
-        refreshQueueUI();
-        showToast("Standalone Mode: Offline queue cleared. Ready for pilot testing.", "success", 5000);
-      } else {
-        showToast("Standalone PWA Mode: Real-user training & assessment active.", "success", 4000);
-      }
-      return;
-    }
-
-    // Case 2: External backend or localhost
-    const isOnlineWithBackend = await checkBackendConnectivity();
-    if (!isOnlineWithBackend) {
-      if (queue.length > 0) {
-        showToast(
-          `Cloud backend offline (${base ? base + "/api/health" : "/api/health"}). Click 'Queue' -> 'Clear' to discard or check server status.`,
-          "warn",
-          6000
-        );
-      } else {
-        showToast("Backend database connection offline", "warn");
-      }
-      refreshQueueUI();
-      return;
-    }
-
     if (!queue.length) {
-      showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
+      if (!silent) showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
       refreshQueueUI();
       return;
     }
 
-    showToast(`Syncing ${queue.length} offline action(s) to Aiven Cloud DB...`, "info");
+    if (!silent) {
+      showToast(`Syncing ${queue.length} offline action(s) to Aiven Cloud DB...`, "info");
+    }
     setSyncStatus("syncing", `Syncing ${queue.length} queued action(s)...`);
 
-    // 1. Fast Batch Sync to Cloud DB
+    // 1. Primary Unified Batch Sync to Cloud DB
     try {
-      const batchRes = await fetch(apiUrl("/api/events/log"), {
+      const batchRes = await fetch(apiUrl("/api/sync/batch"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(queue.map((q) => q.payload))
@@ -479,10 +442,16 @@
         LS.set(DBK.lastSync, nowIso());
         setSyncStatus("success", `All ${queue.length} action(s) synced to Aiven Cloud DB (${json.latency_ms || "1"}ms)`);
         refreshQueueUI();
-        showToast(`All ${queue.length} queued action(s) synced to Aiven Cloud DB!`, "success");
+        if (!silent) {
+          showToast(`All ${queue.length} offline action(s) synced to Aiven Cloud DB!`, "success");
+        }
+        await syncFromCloudPrimary();
+        renderAll();
         return;
       }
-    } catch (_) {}
+    } catch (batchErr) {
+      console.warn("Primary batch sync failed, attempting individual fallbacks:", batchErr);
+    }
 
     // 2. Fallback: item-by-item sync
     const remaining = [];
@@ -490,15 +459,38 @@
 
     for (let i = 0; i < queue.length; i++) {
       const item = queue[i];
+      const p = item.payload || {};
+      const action = (p.action || p.type || p.event || "").toLowerCase();
+      let success = false;
+
       try {
-        const res = await sendToSheet(item.payload, true);
-        if (res && res.ok) {
-          syncedCount++;
-        } else {
-          item.retries = (item.retries || 0) + 1;
-          remaining.push(item);
+        if (action === "attendance") {
+          const res = await fetch(apiUrl("/api/attendance"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(p)
+          });
+          if (res.ok) success = true;
+        } else if (action === "assessment" || action === "attempt") {
+          const res = await fetch(apiUrl("/api/submit-assessment"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(p)
+          });
+          if (res.ok) success = true;
+        }
+
+        if (!success) {
+          const evRes = await sendToSheet(p, true);
+          if (evRes && evRes.ok) success = true;
         }
       } catch (e) {
+        success = false;
+      }
+
+      if (success) {
+        syncedCount++;
+      } else {
         item.retries = (item.retries || 0) + 1;
         remaining.push(item);
       }
@@ -507,10 +499,21 @@
     saveQueue(remaining);
     refreshQueueUI();
 
+    if (syncedCount > 0) {
+      LS.set(DBK.lastSync, nowIso());
+      setSyncStatus("success", `Synced ${syncedCount} offline action(s) to database.`);
+      await syncFromCloudPrimary();
+      renderAll();
+    }
+
     if (remaining.length === 0) {
-      showToast(`All ${syncedCount} queued action(s) synced to Aiven Cloud DB!`, "success");
+      if (!silent) {
+        showToast(`All ${syncedCount} queued action(s) synced to Aiven Cloud DB!`, "success");
+      }
     } else {
-      showToast(`Synced ${syncedCount} item(s). ${remaining.length} item(s) remain queued.`, "warn");
+      if (!silent) {
+        showToast(`Synced ${syncedCount} item(s). ${remaining.length} item(s) remain queued.`, "warn");
+      }
     }
   }
 
@@ -1436,41 +1439,52 @@
     const wId = user.workerUniqueId || user.worker_unique_id || "";
     const fName = user.fullName || user.full_name || "";
 
-    // Direct Primary write to Cloud DB attendance table
-    fetch(apiUrl("/api/attendance"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        trainingId: t.id,
-        userId: user.id,
-        workerUniqueId: wId,
-        fullName: fName,
-        phone: user.phone,
-        designation: desig,
-        facilityName: facName,
-        district: dist,
-        status: rec.attendanceStatus
-      })
-    }).catch((err) => console.debug("Direct attendance write error:", err));
-
-    const syncResult = await logEvent("attendance", {
+    const attPayload = {
+      action: "attendance",
+      type: "attendance",
+      event: "attendance",
+      trainingId: t.id,
+      training_id: t.id,
+      trainingTitle: t.title,
+      userId: user.id,
+      user_id: user.id,
       workerUniqueId: wId,
       fullName: fName,
+      phone: user.phone,
       designation: desig,
       facilityName: facName,
       facilityType: facType,
       cityOrVillage: cityVill,
       district: dist,
-      phone: user.phone,
-      trainingId: t.id,
-      trainingTitle: t.title,
-      trainingCategory: t.category,
+      district_name: dist,
+      status: rec.attendanceStatus,
       attendanceStatus: rec.attendanceStatus,
-      checkedInAt: rec.checkedInAt
-    });
+      checkedInAt: rec.checkedInAt,
+      timestamp: rec.checkedInAt
+    };
 
-    if (syncResult && !syncResult.ok && !syncResult.queued) {
-      showToast("Attendance saved locally. Sync queued.", "info");
+    if (navigator.onLine) {
+      try {
+        const res = await fetch(apiUrl("/api/attendance"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(attPayload)
+        });
+        if (res.ok) {
+          LS.set(DBK.lastSync, nowIso());
+          setSyncStatus("success", "Attendance recorded in cloud database");
+          logEvent("attendance", attPayload).catch(() => {});
+        } else {
+          addToQueue(attPayload);
+          showToast("Attendance saved locally. Queued for cloud sync.", "info");
+        }
+      } catch (err) {
+        addToQueue(attPayload);
+        showToast("Attendance saved locally. Queued for cloud sync.", "info");
+      }
+    } else {
+      addToQueue(attPayload);
+      showToast("Attendance saved locally. Will sync automatically when internet is restored.", "info");
     }
 
     renderAll();
@@ -1707,59 +1721,70 @@
     const passText = passed ? "Passed (≥ 60%)" : "Needs Improvement (< 60%)";
     showToast(`${type} Submitted! Score: ${score}/${totalMarks} (${percent}%) • ${passText}`, passed ? "success" : "warn");
 
-    const syncResult = await logEvent("assessment", {
-      trainingId,
-      trainingTitle: t ? t.title : "",
-      trainingCategory: t ? t.category : "",
-      testType: type,
-      score,
-      totalMarks,
-      percent,
-      passed: passed ? "yes" : "no"
-    });
+    const timeSpentSeconds = activeTestStartTime
+      ? Math.max(15, Math.round((Date.now() - activeTestStartTime) / 1000))
+      : 180;
+    const preAttempt = type === "POST" ? latestAttempt(trainingId, user.id, "PRE") : null;
+    const preScore = preAttempt ? preAttempt.percent : (type === "PRE" ? percent : 0);
+    const postScore = type === "POST" ? percent : 0;
 
-    if (syncResult && !syncResult.ok && !syncResult.queued) {
-      showToast("Assessment recorded locally. Sync queued.", "info");
-    }
+    const testPayload = {
+      action: "assessment",
+      type: "assessment",
+      event: "assessment",
+      trainingId: trainingId,
+      training_id: trainingId,
+      trainingTitle: t ? t.title : "Clinical Module",
+      module_name: t ? t.title : "Clinical Module",
+      user_id: user.workerUniqueId || user.phone || user.id,
+      userId: user.id,
+      workerUniqueId: user.workerUniqueId || "",
+      fullName: user.fullName || "",
+      phone: user.phone || "",
+      designation: user.designation || user.profile?.designation || "",
+      facilityName: user.facilityName || user.facility_name || user.profile?.facilityName || "",
+      district: user.district || user.district_name || (user.profile?.districtId ? districtNameById(user.profile.districtId) : ""),
+      testType: type.toUpperCase(),
+      test_type: type.toLowerCase(),
+      type: type.toLowerCase(),
+      score: score,
+      totalMarks: totalMarks,
+      total_marks: totalMarks,
+      percent: percent,
+      passed: passed ? 1 : 0,
+      pre_test_score: preScore,
+      post_test_score: postScore,
+      time_spent_seconds: timeSpentSeconds,
+      submittedAt: nowIso(),
+      timestamp: nowIso()
+    };
 
-    // Submit BOTH PRE and POST tests to Flask Backend / Cloud DB Primary
-    try {
-      const timeSpentSeconds = activeTestStartTime
-        ? Math.max(15, Math.round((Date.now() - activeTestStartTime) / 1000))
-        : 180;
-      const preAttempt = type === "POST" ? latestAttempt(trainingId, user.id, "PRE") : null;
+    if (navigator.onLine) {
+      try {
+        const res = await fetch(apiUrl("/api/submit-assessment"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(testPayload)
+        });
 
-      const res = await fetch(apiUrl("/api/submit-assessment"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trainingId: trainingId,
-          training_id: trainingId,
-          user_id: user.workerUniqueId || user.phone || user.id,
-          module_name: t ? t.title : "Clinical Module",
-          test_type: type.toLowerCase(),
-          type: type.toLowerCase(),
-          score: score,
-          total_marks: totalMarks,
-          totalMarks: totalMarks,
-          percent: percent,
-          pre_test_score: preAttempt ? preAttempt.percent : (type === "PRE" ? percent : 0),
-          post_test_score: type === "POST" ? percent : 0,
-          time_spent_seconds: timeSpentSeconds
-        })
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        if (errJson.message) {
-          showToast(errJson.message, "warn");
+        if (res.ok) {
+          LS.set(DBK.lastSync, nowIso());
+          if (type === "POST" && window.onUserAuthorized) {
+            setTimeout(() => window.onUserAuthorized(user.workerUniqueId || user.phone || user.id, true), 800);
+          }
+          logEvent("assessment", testPayload).catch(() => {});
+        } else {
+          addToQueue(testPayload);
+          showToast(`${type} Assessment recorded locally. Queued for cloud sync.`, "info");
         }
-      } else {
-        if (type === "POST" && window.onUserAuthorized) {
-          setTimeout(() => window.onUserAuthorized(user.workerUniqueId || user.phone || user.id, true), 800);
-        }
+      } catch (err) {
+        addToQueue(testPayload);
+        showToast(`${type} Assessment recorded locally. Queued for cloud sync.`, "info");
       }
-    } catch (_) {}
+    } else {
+      addToQueue(testPayload);
+      showToast(`${type} Assessment recorded locally. Will sync automatically when connected.`, "info");
+    }
 
     byId("testPanel")?.classList.add("hidden");
     renderAll();
@@ -3245,16 +3270,26 @@
     wireDistrictSelect();
 
     // Auto-sync and badge update on connection change
-    window.addEventListener("online", () => {
+    window.addEventListener("online", async () => {
       setOnlineBadge();
-      showToast("Internet connection restored. Synchronizing offline queue...", "info");
-      processOfflineQueue();
+      showToast("Internet connection restored. Automatically syncing offline data to database...", "info");
+      await processOfflineQueue(false);
+      await syncFromCloudPrimary();
+      renderAll();
     });
 
     window.addEventListener("offline", () => {
       setOnlineBadge();
       showToast("Internet connection lost. Switched to offline queue mode.", "warn");
     });
+
+    // Automatic background synchronization heartbeat: checks every 15 seconds
+    setInterval(async () => {
+      if (navigator.onLine && getQueue().length > 0) {
+        console.info("[AutoSync] Heartbeat detected pending offline actions. Synchronizing...");
+        await processOfflineQueue(true);
+      }
+    }, 15000);
     // PWA Install Prompt
     let deferredPrompt;
     window.addEventListener("beforeinstallprompt", (e) => {
@@ -3528,6 +3563,9 @@
 
     try {
       syncFromCloudPrimary();
+      if (navigator.onLine && getQueue().length > 0) {
+        processOfflineQueue(true);
+      }
     } catch (e) {
       console.debug("Initial primary sync notice:", e);
     }
