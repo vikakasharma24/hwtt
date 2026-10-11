@@ -815,152 +815,28 @@
 
   const seedSampleTrainings = seedMasterTrainings;
 
-  function seedMasterAttendance() {
-    let existing = LS.get(DBK.attendance, []);
-    if (!Array.isArray(existing)) existing = [];
+  function purgeMockTestData() {
+    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
+    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
 
-    const masterAttendance = [
-      {
-        id: 1,
-        trainingId: "T-MCH-002",
-        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
-        workerUniqueId: "JH559304",
-        fullName: "Vikash Sharma",
-        phone: "7004369523",
-        designation: "ANM",
-        facilityName: "ratu",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-06T00:18:59.000Z"
-      },
-      {
-        id: 2,
-        trainingId: "T-IMNCI-003",
-        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
-        workerUniqueId: "JH559304",
-        fullName: "Vikash Sharma",
-        phone: "7004369523",
-        designation: "ANM",
-        facilityName: "ratu",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-06T00:46:03.000Z"
-      },
-      {
-        id: 3,
-        trainingId: "T-UIP-004",
-        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
-        workerUniqueId: "JH559304",
-        fullName: "Vikash Sharma",
-        phone: "7004369523",
-        designation: "ANM",
-        facilityName: "ratu",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-06T00:48:26.000Z"
-      },
-      {
-        id: 4,
-        trainingId: "T-TB-001",
-        userId: "88f24edb-0a68-450e-a4fe-d54625b34da5",
-        workerUniqueId: "JH559304",
-        fullName: "Vikash Sharma",
-        phone: "7004369523",
-        designation: "ANM",
-        facilityName: "ratu",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-06T00:48:44.000Z"
-      },
-      {
-        id: 5,
-        trainingId: "T-IMNCI-003",
-        userId: "e547834b-1166-4e49-810c-75dc6b2af273",
-        workerUniqueId: "JH782494",
-        fullName: "Daymand",
-        phone: "9431590185",
-        designation: "CHO",
-        facilityName: "CHC Namkum",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-06T17:06:26.000Z"
-      },
-      {
-        id: 6,
-        trainingId: "T-IMNCI-003",
-        userId: "c22d679c-206b-4416-9fe1-141f967b26d8",
-        workerUniqueId: "JH176550",
-        fullName: "akshat",
-        phone: "9090909090",
-        designation: "ANM",
-        facilityName: "CHC Ormanjhi",
-        district: "Ranchi",
-        attendanceStatus: "Present",
-        checkedInAt: "2026-10-09T08:59:29.000Z"
+    try {
+      let atts = LS.get(DBK.attendance, []);
+      if (Array.isArray(atts)) {
+        atts = atts.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
+        LS.set(DBK.attendance, atts);
       }
-    ];
-
-    const attMap = new Map();
-    existing.forEach((a) => {
-      const k = `${a.trainingId}_${a.userId}`;
-      attMap.set(k, a);
-    });
-    masterAttendance.forEach((m) => {
-      const k = `${m.trainingId}_${m.userId}`;
-      if (!attMap.has(k)) {
-        attMap.set(k, m);
-      } else {
-        const item = attMap.get(k);
-        if (!item.fullName && m.fullName) item.fullName = m.fullName;
-        if (!item.workerUniqueId && m.workerUniqueId) item.workerUniqueId = m.workerUniqueId;
-        if (!item.phone && m.phone) item.phone = m.phone;
-        if (!item.designation && m.designation) item.designation = m.designation;
-        if (!item.facilityName && m.facilityName) item.facilityName = m.facilityName;
-        if (!item.district && m.district) item.district = m.district;
+      let atmps = LS.get(DBK.attempts, []);
+      if (Array.isArray(atmps)) {
+        atmps = atmps.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
+        LS.set(DBK.attempts, atmps);
       }
-    });
-    LS.set(DBK.attendance, Array.from(attMap.values()));
-  }
-
-  function seedMasterAttempts() {
-    let existing = LS.get(DBK.attempts, []);
-    if (!Array.isArray(existing)) existing = [];
-
-    const masterAttempts = [
-      { id: 1, trainingId: "T-MCH-002", trainingTitle: "Comprehensive Maternal & Newborn Health Care Protocols", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:19:08.000Z" },
-      { id: 2, trainingId: "T-MCH-002", trainingTitle: "Comprehensive Maternal & Newborn Health Care Protocols", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:20:50.000Z" },
-      { id: 3, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:46:18.000Z" },
-      { id: 4, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T00:46:50.000Z" },
-      { id: 5, trainingId: "T-TB-001", trainingTitle: "National Tuberculosis Elimination Program (NTEP) Refresher", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-06T00:53:08.000Z" },
-      { id: 6, trainingId: "T-TB-001", trainingTitle: "National Tuberculosis Elimination Program (NTEP) Refresher", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T00:53:15.000Z" },
-      { id: 7, trainingId: "T-UIP-004", trainingTitle: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-06T00:53:26.000Z" },
-      { id: 8, trainingId: "T-UIP-004", trainingTitle: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness", userId: "88f24edb-0a68-450e-a4fe-d54625b34da5", workerUniqueId: "JH559304", fullName: "Vikash Sharma", phone: "7004369523", type: "POST", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T00:53:54.000Z" },
-      { id: 9, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "e547834b-1166-4e49-810c-75dc6b2af273", workerUniqueId: "JH782494", fullName: "Daymand", phone: "9431590185", type: "PRE", score: 1, totalMarks: 2, percent: 50, passed: false, submittedAt: "2026-10-06T17:06:30.000Z" },
-      { id: 10, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "e547834b-1166-4e49-810c-75dc6b2af273", workerUniqueId: "JH782494", fullName: "Daymand", phone: "9431590185", type: "POST", score: 2, totalMarks: 2, percent: 100, passed: true, submittedAt: "2026-10-06T17:06:35.000Z" },
-      { id: 11, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "c22d679c-206b-4416-9fe1-141f967b26d8", workerUniqueId: "JH176550", fullName: "akshat", phone: "9090909090", type: "PRE", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-09T08:59:36.000Z" },
-      { id: 12, trainingId: "T-IMNCI-003", trainingTitle: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification", userId: "c22d679c-206b-4416-9fe1-141f967b26d8", workerUniqueId: "JH176550", fullName: "akshat", phone: "9090909090", type: "POST", score: 0, totalMarks: 2, percent: 0, passed: false, submittedAt: "2026-10-09T08:59:48.000Z" }
-    ];
-
-    const atmpMap = new Map();
-    existing.forEach((a) => {
-      const k = `${a.trainingId}_${a.userId}_${(a.type || "").toUpperCase()}`;
-      atmpMap.set(k, a);
-    });
-    masterAttempts.forEach((m) => {
-      const k = `${m.trainingId}_${m.userId}_${m.type}`;
-      if (!atmpMap.has(k)) {
-        atmpMap.set(k, m);
-      } else {
-        const item = atmpMap.get(k);
-        if (!item.fullName && m.fullName) item.fullName = m.fullName;
-        if (!item.workerUniqueId && m.workerUniqueId) item.workerUniqueId = m.workerUniqueId;
-        if (!item.phone && m.phone) item.phone = m.phone;
-        if (item.score == null && m.score != null) item.score = m.score;
-        if (item.totalMarks == null && m.totalMarks != null) item.totalMarks = m.totalMarks;
-        if (item.percent == null && m.percent != null) item.percent = m.percent;
+      let usrs = LS.get(DBK.users, []);
+      if (Array.isArray(usrs)) {
+        usrs = usrs.filter((u) => u.role === ROLES.ADMIN || (!mockIds.includes(u.workerUniqueId) && !mockPhones.includes(u.phone)));
+        LS.set(DBK.users, usrs);
       }
-    });
-    LS.set(DBK.attempts, Array.from(atmpMap.values()));
+      LS.set(DBK.offlineQueue, []);
+    } catch (_) {}
   }
 
   /* ==========================
@@ -1444,7 +1320,11 @@
      ATTENDANCE
      ========================== */
   function getAttendance() {
-    return LS.get(DBK.attendance, []);
+    const list = LS.get(DBK.attendance, []);
+    if (!Array.isArray(list)) return [];
+    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
+    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
+    return list.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
   }
 
   function saveAttendance(rows) {
@@ -1575,7 +1455,11 @@
      TESTS / ASSESSMENTS
      ========================== */
   function getAttempts() {
-    return LS.get(DBK.attempts, []);
+    const list = LS.get(DBK.attempts, []);
+    if (!Array.isArray(list)) return [];
+    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
+    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
+    return list.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
   }
 
   function saveAttempts(atts) {
@@ -3269,6 +3153,22 @@
       refreshQueueUI();
     });
 
+    byId("resetPilotDataBtn")?.addEventListener("click", () => {
+      if (confirm("Reset local test data for clean pilot testing? This will clear stale test workers, attendance, and attempts from this browser.")) {
+        purgeMockTestData();
+        localStorage.removeItem(DBK.attendance);
+        localStorage.removeItem(DBK.attempts);
+        localStorage.removeItem(DBK.offlineQueue);
+        const curUsers = LS.get(DBK.users, []);
+        if (Array.isArray(curUsers)) {
+          LS.set(DBK.users, curUsers.filter((u) => u.role === ROLES.ADMIN || u.phone === "9999999999"));
+        }
+        showToast("Local test data cleaned! Ready for real health workers.", "success");
+        renderAll();
+        updateQueueBadge();
+      }
+    });
+
     byId("pendingBadge")?.addEventListener("click", () => {
       byId("queuePanel")?.classList.toggle("hidden");
       refreshQueueUI();
@@ -3574,7 +3474,8 @@
 
     // 0. Clean stale test data and invalid github.io API URL from browser storage for real pilot testing
     try {
-      const PILOT_FLAG = "jh_pilot_v2_clean";
+      purgeMockTestData();
+      const PILOT_FLAG = "jh_pilot_v3_clean";
       if (!localStorage.getItem(PILOT_FLAG)) {
         localStorage.removeItem(DBK.attendance);
         localStorage.removeItem(DBK.attempts);
