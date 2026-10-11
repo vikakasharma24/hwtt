@@ -94,54 +94,6 @@ in_memory_db = {
             "district_name": "Ranchi",
             "state": "Jharkhand",
             "is_active": 1
-        },
-        "88f24edb-0a68-450e-a4fe-d54625b34da5": {
-            "id": "88f24edb-0a68-450e-a4fe-d54625b34da5",
-            "worker_unique_id": "JH559304",
-            "phone": "7004369523",
-            "password_hash": hash_password("Worker@123"),
-            "role": "WORKER",
-            "full_name": "Vikash Sharma",
-            "designation": "ANM",
-            "facility_name": "ratu",
-            "facility_type": "Other",
-            "city_or_village": "ratu",
-            "district_id": "D-20",
-            "district_name": "Ranchi",
-            "state": "Jharkhand",
-            "is_active": 1
-        },
-        "c22d679c-206b-4416-9fe1-141f967b26d8": {
-            "id": "c22d679c-206b-4416-9fe1-141f967b26d8",
-            "worker_unique_id": "JH176550",
-            "phone": "9090909090",
-            "password_hash": hash_password("Worker@123"),
-            "role": "WORKER",
-            "full_name": "akshat",
-            "designation": "ANM",
-            "facility_name": "CHC Ormanjhi",
-            "facility_type": "CHC",
-            "city_or_village": "Ranchi",
-            "district_id": "D-20",
-            "district_name": "Ranchi",
-            "state": "Jharkhand",
-            "is_active": 1
-        },
-        "e547834b-1166-4e49-810c-75dc6b2af273": {
-            "id": "e547834b-1166-4e49-810c-75dc6b2af273",
-            "worker_unique_id": "JH782494",
-            "phone": "9431590185",
-            "password_hash": hash_password("Worker@123"),
-            "role": "WORKER",
-            "full_name": "Daymand",
-            "designation": "CHO",
-            "facility_name": "CHC Namkum",
-            "facility_type": "CHC",
-            "city_or_village": "Namkum",
-            "district_id": "D-20",
-            "district_name": "Ranchi",
-            "state": "Jharkhand",
-            "is_active": 1
         }
     },
     "trainings": {
@@ -469,37 +421,22 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_user_active_risk ON ai_remedial_recommendations(user_id, is_resolved, predicted_risk_level);
             """)
 
-            # 8. Create Case-Insensitive Compatibility Views
-            cursor.execute("""
-                CREATE OR REPLACE VIEW training AS SELECT * FROM trainings;
-                CREATE OR REPLACE VIEW "Training" AS SELECT * FROM trainings;
-                CREATE OR REPLACE VIEW "Trainings" AS SELECT * FROM trainings;
-                CREATE OR REPLACE VIEW "Attendance" AS SELECT * FROM attendance;
-                CREATE OR REPLACE VIEW "Users" AS SELECT * FROM users;
-                CREATE OR REPLACE VIEW "Attempts" AS SELECT * FROM attempts;
-                CREATE OR REPLACE VIEW "Assessments" AS SELECT * FROM assessments;
-            """)
-
-            # 9. Seed default master users if users table is empty
+            # 8. Seed default master Admin if users table is empty
             cursor.execute("SELECT COUNT(*) AS cnt FROM users;")
             row = cursor.fetchone() or {}
             user_cnt = list(row.values())[0] if row else 0
             if user_cnt == 0:
                 admin_hash = hash_password("Admin@123")
-                worker_hash = hash_password("Worker@123")
                 cursor.execute("""
                     INSERT INTO users 
                         (id, worker_unique_id, phone, password_hash, role, full_name,
                          designation, facility_name, facility_type, city_or_village,
                          district_id, district_name, state)
                     VALUES
-                        ('0015fc58-c17d-4155-94ee-9226d9c6696b', 'ADMIN-000001', '9999999999', %s, 'ADMIN', 'State Admin', 'State Health Administrator', 'NHM HQ', 'State HQ', 'Ranchi', 'D-20', 'Ranchi', 'Jharkhand'),
-                        ('88f24edb-0a68-450e-a4fe-d54625b34da5', 'JH559304', '7004369523', %s, 'WORKER', 'Vikash Sharma', 'ANM', 'ratu', 'Other', 'ratu', 'D-20', 'Ranchi', 'Jharkhand'),
-                        ('c22d679c-206b-4416-9fe1-141f967b26d8', 'JH176550', '9090909090', %s, 'WORKER', 'akshat', 'ANM', 'CHC Ormanjhi', 'CHC', 'Ranchi', 'D-20', 'Ranchi', 'Jharkhand'),
-                        ('e547834b-1166-4e49-810c-75dc6b2af273', 'JH782494', '9431590185', %s, 'WORKER', 'Daymand', 'CHO', 'CHC Namkum', 'CHC', 'Namkum', 'D-20', 'Ranchi', 'Jharkhand')
+                        ('0015fc58-c17d-4155-94ee-9226d9c6696b', 'ADMIN-000001', '9999999999', %s, 'ADMIN', 'State Admin', 'State Health Administrator', 'NHM HQ', 'State HQ', 'Ranchi', 'D-20', 'Ranchi', 'Jharkhand')
                     ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name;
-                """, (admin_hash, worker_hash, worker_hash, worker_hash))
-                logger.info("Auto-seeded master Admin and 3 Workers into clean Aiven database.")
+                """, (admin_hash,))
+                logger.info("Auto-seeded master Admin into clean Aiven database.")
 
             # 10. Seed default core trainings if trainings table is empty
             cursor.execute("SELECT COUNT(*) AS cnt FROM trainings;")

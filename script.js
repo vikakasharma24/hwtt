@@ -646,74 +646,20 @@
           district: "Ranchi",
           state: "Jharkhand"
         }
-      },
-      {
-        id: "88f24edb-0a68-450e-a4fe-d54625b34da5",
-        workerUniqueId: "JH559304",
-        phone: "7004369523",
-        password: workerHash,
-        role: ROLES.WORKER,
-        fullName: "Vikash Sharma",
-        createdAt: nowIso(),
-        profile: {
-          designation: "ANM",
-          facilityName: "ratu",
-          facilityType: "Other",
-          cityOrVillage: "ratu",
-          districtId: "D-20",
-          district: "Ranchi",
-          state: "Jharkhand"
-        }
-      },
-      {
-        id: "c22d679c-206b-4416-9fe1-141f967b26d8",
-        workerUniqueId: "JH176550",
-        phone: "9090909090",
-        password: workerHash,
-        role: ROLES.WORKER,
-        fullName: "akshat",
-        createdAt: nowIso(),
-        profile: {
-          designation: "ANM",
-          facilityName: "CHC Ormanjhi",
-          facilityType: "CHC",
-          cityOrVillage: "Ranchi",
-          districtId: "D-20",
-          district: "Ranchi",
-          state: "Jharkhand"
-        }
-      },
-      {
-        id: "e547834b-1166-4e49-810c-75dc6b2af273",
-        workerUniqueId: "JH782494",
-        phone: "9431590185",
-        password: workerHash,
-        role: ROLES.WORKER,
-        fullName: "Daymand",
-        createdAt: nowIso(),
-        profile: {
-          designation: "CHO",
-          facilityName: "CHC Namkum",
-          facilityType: "CHC",
-          cityOrVillage: "Namkum",
-          districtId: "D-20",
-          district: "Ranchi",
-          state: "Jharkhand"
-        }
       }
     ];
 
     let changed = false;
 
-    // Purge deleted users from local storage if previously saved
+    // Purge deleted/test workers from local storage if previously saved
     const origCount = users.length;
     users = users.filter((u) => {
       const p = String(u.phone || "");
       const wId = String(u.workerUniqueId || "");
       const name = String(u.fullName || "").toLowerCase();
-      if (p === "7777777777" || p === "8888888888") return false;
-      if (wId === "JH254248" || wId === "JH695800") return false;
-      if (name === "dimanta" || name === "rajesh") return false;
+      if (p === "7004369523" || p === "9090909090" || p === "9431590185" || p === "7777777777" || p === "8888888888") return false;
+      if (wId === "JH559304" || wId === "JH176550" || wId === "JH782494" || wId === "JH254248" || wId === "JH695800") return false;
+      if (name === "vikash sharma" || name === "akshat" || name === "daymand" || name === "dimanta" || name === "rajesh") return false;
       return true;
     });
     if (users.length !== origCount) {
@@ -3628,11 +3574,19 @@
 
     // 0. Clean stale test data and invalid github.io API URL from browser storage for real pilot testing
     try {
-      const PILOT_FLAG = "jh_pilot_v1_clean";
+      const PILOT_FLAG = "jh_pilot_v2_clean";
       if (!localStorage.getItem(PILOT_FLAG)) {
         localStorage.removeItem(DBK.attendance);
         localStorage.removeItem(DBK.attempts);
         localStorage.removeItem(DBK.offlineQueue);
+        const curUsers = LS.get(DBK.users, []);
+        if (Array.isArray(curUsers)) {
+          LS.set(DBK.users, curUsers.filter((u) => u.role === ROLES.ADMIN || u.phone === "9999999999"));
+        }
+        const cur = currentUser();
+        if (cur && cur.role !== ROLES.ADMIN) {
+          LS.remove(DBK.currentUser);
+        }
         const storedApi = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
         if (storedApi.includes("github.io") || storedApi.includes("pages.dev")) {
           localStorage.removeItem(API_STORAGE_KEY);

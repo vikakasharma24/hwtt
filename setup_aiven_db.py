@@ -173,31 +173,19 @@ def create_schema(pg_conn):
     );
     CREATE INDEX IF NOT EXISTS idx_event_type ON event_logs(event_type);
     CREATE INDEX IF NOT EXISTS idx_event_worker ON event_logs(worker_unique_id);
-
-    -- Linux Case-Sensitivity Compatibility Views
-    CREATE OR REPLACE VIEW training AS SELECT * FROM trainings;
-    CREATE OR REPLACE VIEW "Training" AS SELECT * FROM trainings;
-    CREATE OR REPLACE VIEW "Trainings" AS SELECT * FROM trainings;
-    CREATE OR REPLACE VIEW "Attendance" AS SELECT * FROM attendance;
-    CREATE OR REPLACE VIEW "Users" AS SELECT * FROM users;
-    CREATE OR REPLACE VIEW "Attempts" AS SELECT * FROM attempts;
-    CREATE OR REPLACE VIEW "Assessments" AS SELECT * FROM assessments;
     """
     with pg_conn.cursor() as cur:
         cur.execute(ddl)
     pg_conn.commit()
-    print("   [OK] Tables, indexes, and compatibility views active.")
+    print("   [OK] Tables and indexes active.")
 
 
 def seed_enterprise_data(pg_conn):
     print(">> [2/3] Seeding master enterprise records into Aiven PostgreSQL...")
     with pg_conn.cursor() as cur:
-        # 1. Users
+        # 1. Users (Admin Only)
         users = [
-            ("0015fc58-c17d-4155-94ee-9226d9c6696b", "ADMIN-000001", "9999999999", "1d9774659b8ebbd51ee41718ecae8f8d689fb8c582845c43734a697779b5b9e5", "ADMIN", "State Admin", "State Health Administrator", "NHM HQ", "State HQ", "Ranchi", "D-20", "Ranchi", "Jharkhand", 1),
-            ("88f24edb-0a68-450e-a4fe-d54625b34da5", "JH559304", "7004369523", "571f998ac5e2777531f46e7669b8c64c1d1850107c46ed467ea7a1a53095384b", "WORKER", "Vikash Sharma", "ANM", "ratu", "Other", "ratu", "D-20", "Ranchi", "Jharkhand", 1),
-            ("c22d679c-206b-4416-9fe1-141f967b26d8", "JH176550", "9090909090", "885cfffd9b9591a1049d2247aaec5b28c269e841fb852a8a9071109960a36c9f", "WORKER", "akshat", "ANM", "CHC Ormanjhi", "CHC", "Ranchi", "D-20", "Ranchi", "Jharkhand", 1),
-            ("e547834b-1166-4e49-810c-75dc6b2af273", "JH782494", "9431590185", "571f998ac5e2777531f46e7669b8c64c1d1850107c46ed467ea7a1a53095384b", "WORKER", "Daymand", "CHO", "CHC Namkum", "CHC", "Namkum", "D-20", "Ranchi", "Jharkhand", 1)
+            ("0015fc58-c17d-4155-94ee-9226d9c6696b", "ADMIN-000001", "9999999999", "1d9774659b8ebbd51ee41718ecae8f8d689fb8c582845c43734a697779b5b9e5", "ADMIN", "State Admin", "State Health Administrator", "NHM HQ", "State HQ", "Ranchi", "D-20", "Ranchi", "Jharkhand", 1)
         ]
         for u in users:
             cur.execute("""
@@ -206,7 +194,7 @@ def seed_enterprise_data(pg_conn):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, phone = EXCLUDED.phone;
             """, u)
-        print(f"   [SEEDED] {len(users)} users.")
+        print(f"   [SEEDED] {len(users)} users (Admin only).")
 
         # 2. Trainings
         trainings = [
