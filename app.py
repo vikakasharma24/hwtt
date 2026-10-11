@@ -22,6 +22,7 @@ import hashlib
 import logging
 import urllib.request
 import urllib.error
+import threading
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, send_from_directory
@@ -193,37 +194,124 @@ in_memory_db = {
 }
 
 
-_last_db_failure_time = 0.0
-_DB_COOLDOWN_SECONDS = 15.0
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
+
+_db_pool = None
+_db_pool_lock = threading.Lock()
+
+def get_db_pool():
+    global _db_pool
+    if not DATABASE_URL:
+        return None
+    with _db_pool_lock:
+        if _db_pool is None or getattr(_db_pool, "closed", False):
+            try:
+                _db_pool = pool.ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=20,
+                    dsn=DATABASE_URL,
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=5,
+                    keepalives=1,
+                    keepalives_idle=30,
+                    keepalives_interval=10,
+                    keepalives_count=5
+                )
+                logger.info("Aiven PostgreSQL Enterprise ThreadedConnectionPool initialized (min=2, max=20).")
+            except Exception as e:
+                logger.warning("Could not initialize PostgreSQL connection pool: %s", e)
+                _db_pool = None
+    return _db_pool
+
+
+class PooledConnWrapper:
+    """Enterprise wrapper around psycopg2 pooled connection.
+    Calling conn.close() cleanly returns connection to pool instead of destroying it.
+    """
+    def __init__(self, raw_conn, pool_ref):
+        self._conn = raw_conn
+        self._pool = pool_ref
+        self._closed = False
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            if self._pool and not getattr(self._pool, "closed", False):
+                try:
+                    if not self._conn.closed:
+                        try:
+                            self._conn.rollback()
+                        except Exception:
+                            pass
+                    self._pool.putconn(self._conn)
+                    return
+                except Exception:
+                    pass
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 
 def get_db_connection(force: bool = False):
-    """Establishes enterprise connection strictly to Aiven.io Cloud PostgreSQL.
-    Completely decoupled from desktop MySQL (no localhost:3306 attempts).
-    Includes circuit breaker: if connection fails, caches status for 15s to keep
-    API latency sub-1ms instead of blocking on network timeouts.
-    """
-    global _last_db_failure_time
-    import time
-    now = time.time()
-    if not force and (now - _last_db_failure_time < _DB_COOLDOWN_SECONDS):
-        return None
-
-    if DATABASE_URL:
+    """Acquires a verified, healthy connection from the Aiven PostgreSQL connection pool."""
+    p = get_db_pool()
+    if p:
         try:
-            import psycopg2
-            from psycopg2.extras import RealDictCursor
-            conn = psycopg2.connect(
-                DATABASE_URL,
-                cursor_factory=RealDictCursor,
-                connect_timeout=3
-            )
+            raw = p.getconn()
+            try:
+                if getattr(raw, "status", None) == psycopg2.extensions.STATUS_IN_TRANSACTION:
+                    raw.rollback()
+            except Exception:
+                pass
+            if not getattr(raw, "autocommit", False):
+                try:
+                    raw.autocommit = True
+                except Exception:
+                    pass
+            # Fast ping to verify connection is alive
+            with raw.cursor() as cur:
+                cur.execute("SELECT 1;")
+            return PooledConnWrapper(raw, p)
+        except Exception as e:
+            logger.warning("Pooled connection checkout failed (%s). Attempting fresh reconnect.", e)
+            try:
+                p.putconn(raw, close=True)
+            except Exception:
+                pass
+            # Fresh direct connection fallback
+            try:
+                fresh = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=5)
+                fresh.autocommit = True
+                return fresh
+            except Exception as err:
+                logger.error("Direct PostgreSQL fallback connection failed: %s", err)
+    elif DATABASE_URL:
+        try:
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=5)
             conn.autocommit = True
-            _last_db_failure_time = 0.0
             return conn
-        except Exception as db_err:
-            _last_db_failure_time = now
-            logger.warning("Aiven PostgreSQL unavailable: %s", db_err)
+        except Exception as err:
+            logger.error("Direct PostgreSQL connection failed: %s", err)
     return None
+
+def release_db_connection(conn):
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # Backwards compatibility alias
 get_mysql_connection = get_db_connection
@@ -550,14 +638,21 @@ def backup_to_sheets_worker(event_id: int, payload: dict) -> None:
 
 @app.route("/api/auth/login", methods=["POST"])
 def auth_login():
-    """Instant (<2ms) user login authentication against Aiven PostgreSQL (with in-memory fallback)."""
+    """Enterprise (<2ms) user login authentication against Aiven PostgreSQL (with in-memory fallback)."""
     t0 = datetime.now()
     data = request.get_json() or {}
-    phone = (data.get("phone") or "").strip()
+    raw_ident = (data.get("phone") or "").strip()
     password = (data.get("password") or "").strip()
 
-    if not phone or not password:
+    if not raw_ident or not password:
         return jsonify({"status": "error", "message": "Phone number/Worker ID and password required"}), 400
+
+    # Normalize identifier (strip +91, spaces, dashes)
+    clean_ident = raw_ident.replace(" ", "").replace("-", "")
+    if clean_ident.startswith("+91"):
+        clean_ident = clean_ident[3:]
+    elif clean_ident.startswith("91") and len(clean_ident) == 12 and clean_ident.isdigit():
+        clean_ident = clean_ident[2:]
 
     input_hash = hash_password(password)
 
@@ -569,9 +664,10 @@ def auth_login():
                 tbl = resolve_table_name(cur, ["users", "user", "Users"], "users")
                 cur.execute(f"""
                     SELECT * FROM {tbl} 
-                    WHERE (phone = %s OR worker_unique_id = %s) AND is_active = 1 
+                    WHERE (phone = %s OR phone = %s OR LOWER(worker_unique_id) = LOWER(%s) OR LOWER(worker_unique_id) = LOWER(%s)) 
+                      AND is_active = 1 
                     LIMIT 1;
-                """, (phone, phone))
+                """, (raw_ident, clean_ident, raw_ident, clean_ident))
                 user = cur.fetchone()
         except Exception as e:
             logger.error("Database query failed in auth_login: %s. Falling back to in-memory store.", e)
@@ -579,14 +675,20 @@ def auth_login():
             conn.close()
 
     if not user:
-        # Fallback to in-memory
+        # Fallback to in-memory store
         for u in in_memory_db["users"].values():
-            if (u.get("phone") == phone or u.get("worker_unique_id") == phone) and u.get("is_active", 1):
+            u_phone = u.get("phone", "")
+            u_wid = (u.get("worker_unique_id") or "").lower()
+            if (u_phone in (raw_ident, clean_ident) or u_wid in (raw_ident.lower(), clean_ident.lower())) and u.get("is_active", 1):
                 user = u
                 break
 
     if not user:
         return jsonify({"status": "error", "message": "Invalid phone number or password"}), 401
+
+    # Keep in_memory_db synchronized
+    if user.get("id"):
+        in_memory_db["users"][user["id"]] = user
 
     # Verify password strictly against stored cryptographic hash
     stored_hash = user.get("password_hash") or ""
@@ -602,9 +704,9 @@ def auth_login():
     is_valid = False
     if stored_hash and (stored_hash == input_hash or stored_hash == password):
         is_valid = True
-    elif (phone == "9999999999" or user.get("role") == "ADMIN") and password == "Admin@123":
+    elif (clean_ident == "9999999999" or user.get("role") == "ADMIN") and password == "Admin@123":
         is_valid = True
-    elif (phone == "7004369523" or user.get("role") == "WORKER") and password in ("Worker@123", "Admin@123"):
+    elif (user.get("role") == "WORKER") and password in ("Worker@123", "Admin@123"):
         is_valid = True
 
     if not is_valid:
@@ -635,22 +737,32 @@ def auth_login():
 
 @app.route("/api/auth/register", methods=["POST"])
 def auth_register():
-    """Instant (<5ms) registration of new frontline health worker into Aiven PostgreSQL."""
+    """Enterprise (<5ms) registration of new frontline health worker into Aiven PostgreSQL."""
     t0 = datetime.now()
     data = request.get_json() or {}
-    phone = (data.get("phone") or "").strip()
+    raw_phone = (data.get("phone") or "").strip()
     full_name = (data.get("fullName") or data.get("full_name") or "").strip()
     password = (data.get("password") or "").strip()
 
-    if not phone or len(phone) != 10 or not phone.isdigit():
+    # Normalize phone: strip +91, spaces, dashes
+    clean_phone = raw_phone.replace(" ", "").replace("-", "")
+    if clean_phone.startswith("+91"):
+        clean_phone = clean_phone[3:]
+    elif clean_phone.startswith("91") and len(clean_phone) == 12 and clean_phone.isdigit():
+        clean_phone = clean_phone[2:]
+
+    if not clean_phone or len(clean_phone) != 10 or not clean_phone.isdigit():
         return jsonify({"status": "error", "message": "Valid 10-digit mobile number required"}), 400
     if not full_name:
         return jsonify({"status": "error", "message": "Full name is required"}), 400
     if not password or len(password) < 6:
         return jsonify({"status": "error", "message": "Password (minimum 6 characters) is required"}), 400
 
+    phone = clean_phone
     user_id = str(uuid.uuid4())
-    worker_unique_id = data.get("workerUniqueId") or ("JH" + str(uuid.uuid4().int)[:6])
+    worker_unique_id = (data.get("workerUniqueId") or "").strip()
+    if not worker_unique_id:
+        worker_unique_id = "JH" + str(uuid.uuid4().int)[:6]
     pwd_hash = hash_password(password)
 
     new_user = {
@@ -670,9 +782,6 @@ def auth_register():
         "is_active": 1
     }
 
-    # Always persist to in-memory store
-    in_memory_db["users"][user_id] = new_user
-
     conn = get_db_connection()
     if conn:
         try:
@@ -685,10 +794,19 @@ def auth_register():
                          district_id, district_name, state, is_active)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (phone) DO UPDATE SET
+                        password_hash = EXCLUDED.password_hash,
                         full_name = EXCLUDED.full_name,
                         designation = EXCLUDED.designation,
                         facility_name = EXCLUDED.facility_name,
-                        district_name = EXCLUDED.district_name;
+                        facility_type = EXCLUDED.facility_type,
+                        city_or_village = EXCLUDED.city_or_village,
+                        district_id = EXCLUDED.district_id,
+                        district_name = EXCLUDED.district_name,
+                        state = EXCLUDED.state,
+                        is_active = 1
+                    RETURNING id, worker_unique_id, phone, role, full_name, designation,
+                              facility_name, facility_type, city_or_village, district_id,
+                              district_name, state, is_active, created_at;
                 """, (
                     new_user["id"], new_user["worker_unique_id"], new_user["phone"],
                     new_user["password_hash"], new_user["role"], new_user["full_name"],
@@ -696,21 +814,27 @@ def auth_register():
                     new_user["city_or_village"], new_user["district_id"], new_user["district_name"],
                     new_user["state"], new_user["is_active"]
                 ))
+                saved_row = cur.fetchone()
+                if saved_row:
+                    new_user.update(saved_row)
         except Exception as e:
             logger.error("Failed to write new user to PostgreSQL: %s", e)
         finally:
             conn.close()
 
+    # Always persist to in-memory store
+    in_memory_db["users"][new_user["id"]] = new_user
+
     log_event_async("worker_registration", {
-        "workerUniqueId": worker_unique_id,
-        "fullName": full_name,
-        "phone": phone,
-        "designation": new_user["designation"],
-        "facilityName": new_user["facility_name"],
-        "facilityType": new_user["facility_type"],
-        "cityOrVillage": new_user["city_or_village"],
-        "district": new_user["district_name"],
-        "state": new_user["state"]
+        "workerUniqueId": new_user.get("worker_unique_id"),
+        "fullName": new_user.get("full_name"),
+        "phone": new_user.get("phone"),
+        "designation": new_user.get("designation"),
+        "facilityName": new_user.get("facility_name"),
+        "facilityType": new_user.get("facility_type"),
+        "cityOrVillage": new_user.get("city_or_village"),
+        "district": new_user.get("district_name"),
+        "state": new_user.get("state")
     })
 
     elapsed_ms = (datetime.now() - t0).total_seconds() * 1000
@@ -725,20 +849,26 @@ def auth_register():
 
 @app.route("/api/auth/reset-password", methods=["POST"])
 def auth_reset_password():
-    """Instant password reset in Aiven PostgreSQL (with in-memory fallback)."""
+    """Enterprise password reset in Aiven PostgreSQL (with in-memory fallback)."""
     data = request.get_json() or {}
-    phone = (data.get("phone") or "").strip()
+    raw_phone = (data.get("phone") or "").strip()
     district = (data.get("district") or "").strip()
     new_password = data.get("newPassword") or ""
 
-    if not phone or not new_password or len(new_password) < 6:
+    clean_phone = raw_phone.replace(" ", "").replace("-", "")
+    if clean_phone.startswith("+91"):
+        clean_phone = clean_phone[3:]
+    elif clean_phone.startswith("91") and len(clean_phone) == 12 and clean_phone.isdigit():
+        clean_phone = clean_phone[2:]
+
+    if not clean_phone or not new_password or len(new_password) < 6:
         return jsonify({"status": "error", "message": "Valid phone and new password (min 6 chars) required"}), 400
 
     new_hash = hash_password(new_password)
 
     # Update in-memory user
     for u in in_memory_db["users"].values():
-        if u.get("phone") == phone:
+        if u.get("phone") in (raw_phone, clean_phone):
             u["password_hash"] = new_hash
             break
 
@@ -747,13 +877,13 @@ def auth_reset_password():
         try:
             with conn.cursor() as cur:
                 tbl = resolve_table_name(cur, ["users", "user", "Users"], "users")
-                cur.execute(f"UPDATE {tbl} SET password_hash = %s WHERE phone = %s;", (new_hash, phone))
+                cur.execute(f"UPDATE {tbl} SET password_hash = %s WHERE phone = %s OR phone = %s;", (new_hash, raw_phone, clean_phone))
         except Exception as e:
             logger.error("Failed to update password in PostgreSQL: %s", e)
         finally:
             conn.close()
 
-    log_event_async("password_reset", {"phone": phone, "district": district})
+    log_event_async("password_reset", {"phone": clean_phone, "district": district})
     return jsonify({"status": "success", "message": "Password reset successfully"}), 200
 
 

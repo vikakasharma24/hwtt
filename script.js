@@ -75,7 +75,14 @@
   };
   const uuid = () =>
     (crypto?.randomUUID?.() || ("id-" + Math.random().toString(16).slice(2) + Date.now()));
-  const validPhone = (p) => /^\d{10}$/.test((p || "").trim());
+  function cleanPhone(p) {
+    if (!p) return "";
+    let s = String(p).trim().replace(/[\s-]/g, "");
+    if (s.startsWith("+91")) s = s.slice(3);
+    else if (s.startsWith("91") && s.length === 12 && /^\d+$/.test(s)) s = s.slice(2);
+    return s;
+  }
+  const validPhone = (p) => /^\d{10}$/.test(cleanPhone(p));
 
   /* ==========================
      CUSTOM TOAST COMPONENT
@@ -650,20 +657,7 @@
 
     let changed = false;
 
-    // Purge deleted/test workers from local storage if previously saved
-    const origCount = users.length;
-    users = users.filter((u) => {
-      const p = String(u.phone || "");
-      const wId = String(u.workerUniqueId || "");
-      const name = String(u.fullName || "").toLowerCase();
-      if (p === "7004369523" || p === "9090909090" || p === "9431590185" || p === "7777777777" || p === "8888888888") return false;
-      if (wId === "JH559304" || wId === "JH176550" || wId === "JH782494" || wId === "JH254248" || wId === "JH695800") return false;
-      if (name === "vikash sharma" || name === "akshat" || name === "daymand" || name === "dimanta" || name === "rajesh") return false;
-      return true;
-    });
-    if (users.length !== origCount) {
-      changed = true;
-    }
+    // Ensure registered workers and admin are preserved in local store
 
     for (const m of masterUsers) {
       const idx = users.findIndex((u) => u.id === m.id || u.phone === m.phone || (m.workerUniqueId && u.workerUniqueId === m.workerUniqueId));
@@ -816,26 +810,23 @@
   const seedSampleTrainings = seedMasterTrainings;
 
   function purgeMockTestData() {
-    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
-    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
-
     try {
+      // Safe maintenance: only prune invalid null/undefined objects
       let atts = LS.get(DBK.attendance, []);
       if (Array.isArray(atts)) {
-        atts = atts.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
-        LS.set(DBK.attendance, atts);
+        const cleanAtts = atts.filter((a) => a && (a.id || a.trainingId));
+        if (cleanAtts.length !== atts.length) LS.set(DBK.attendance, cleanAtts);
       }
       let atmps = LS.get(DBK.attempts, []);
       if (Array.isArray(atmps)) {
-        atmps = atmps.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
-        LS.set(DBK.attempts, atmps);
+        const cleanAtmps = atmps.filter((a) => a && (a.id || a.trainingId));
+        if (cleanAtmps.length !== atmps.length) LS.set(DBK.attempts, cleanAtmps);
       }
       let usrs = LS.get(DBK.users, []);
       if (Array.isArray(usrs)) {
-        usrs = usrs.filter((u) => u.role === ROLES.ADMIN || (!mockIds.includes(u.workerUniqueId) && !mockPhones.includes(u.phone)));
-        LS.set(DBK.users, usrs);
+        const cleanUsrs = usrs.filter((u) => u && (u.id || u.phone));
+        if (cleanUsrs.length !== usrs.length) LS.set(DBK.users, cleanUsrs);
       }
-      LS.set(DBK.offlineQueue, []);
     } catch (_) {}
   }
 
@@ -856,7 +847,8 @@
     const passInput = byId("loginPass");
     const btn = byId("loginBtn");
 
-    const phone = (phoneInput?.value || "").trim();
+    const rawInput = (phoneInput?.value || "").trim();
+    const phone = /^\+?[\d\s-]+$/.test(rawInput) ? (cleanPhone(rawInput) || rawInput) : rawInput;
     const password = (passInput?.value || "").trim();
 
     if (!phone) {
@@ -893,7 +885,7 @@
             if (data.status === "success" && data.user) {
               const u = data.user;
               const users = LS.get(DBK.users, []);
-              const idx = users.findIndex((x) => x.id === u.id || x.phone === u.phone || x.workerUniqueId === u.worker_unique_id);
+              const idx = users.findIndex((x) => x.id === u.id || cleanPhone(x.phone) === cleanPhone(u.phone) || (u.worker_unique_id && String(x.workerUniqueId || "").toUpperCase() === String(u.worker_unique_id).toUpperCase()));
               const cachedUser = {
                 id: u.id,
                 role: u.role,
@@ -949,7 +941,7 @@
       const users = LS.get(DBK.users, []);
       let u = users.find(
         (x) =>
-          (x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
+          (cleanPhone(x.phone) === cleanPhone(phone) || x.phone === phone || (x.workerUniqueId && x.workerUniqueId.toUpperCase() === phone.toUpperCase())) &&
           (x.password === inputHash || x.password === password || (x.role === ROLES.ADMIN && password === "Admin@123") || (x.role === ROLES.WORKER && (password === "Worker@123" || password === "Admin@123")))
       );
 
@@ -1014,6 +1006,7 @@
   window.quickAdminLogin = quickAdminLogin;
   window.logout = logout;
   window.registerWorker = registerWorker;
+  window.currentUser = currentUser;
 
   async function logout() {
     const u = currentUser();
@@ -1031,7 +1024,8 @@
 
   async function registerWorker() {
     const fullName = (byId("rName")?.value || "").trim();
-    const phone = (byId("rPhone")?.value || "").trim();
+    const rawPhone = (byId("rPhone")?.value || "").trim();
+    const phone = cleanPhone(rawPhone);
     const password = byId("rPass")?.value || "";
     const designation = byId("rDesignation")?.value || "";
     const gender = byId("rGender")?.value || "";
@@ -1045,14 +1039,18 @@
     const consentAccepted = !!byId("rConsent")?.checked;
 
     if (!fullName) return showToast("Full Name is required", "warn");
-    if (!validPhone(phone)) return showToast("Enter valid 10-digit phone number", "warn");
+    if (!validPhone(phone)) return showToast("Enter valid 10-digit mobile number", "warn");
     if (password.length < 6) return showToast("Password must be at least 6 characters", "warn");
     if (!facilityName) return showToast("Health Facility name is required", "warn");
     if (!districtId) return showToast("District selection is required", "warn");
     if (!consentAccepted) return showToast("Consent acceptance is required", "warn");
 
     const users = LS.get(DBK.users, []);
-    if (users.some((u) => u.phone === phone)) return showToast("This phone number is already registered", "error");
+    const existingIdx = users.findIndex((u) => cleanPhone(u.phone) === phone);
+    const regUrl = apiUrl("/api/auth/register");
+    if (!regUrl && existingIdx >= 0) {
+      return showToast("This phone number is already registered. Please sign in.", "warn");
+    }
 
     const hashedPassword = await hashPassword(password);
     const workerUniqueId = "JH" + String(Math.floor(100000 + Math.random() * 900000));
@@ -1060,76 +1058,83 @@
 
     // 1. PRIMARY FAST REGISTRATION IN CLOUD DB (< 5ms)
     try {
-      const regUrl = apiUrl("/api/auth/register");
       if (regUrl) {
         const res = await fetch(regUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-          fullName,
-          phone,
-          password,
-          workerUniqueId,
-          designation,
-          facilityName,
-          facilityType,
-          cityOrVillage,
-          districtId,
-          district: districtName,
-          state
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === "success" && data.user) {
-          const u = data.user;
-          const users = LS.get(DBK.users, []);
-          const cachedUser = {
-            id: u.id,
-            role: u.role,
-            phone: u.phone,
-            password: hashedPassword,
-            workerUniqueId: u.worker_unique_id || workerUniqueId,
-            fullName: u.full_name || fullName,
-            createdAt: u.created_at || nowIso(),
-            profile: {
-              designation,
-              gender,
-              facilityName,
-              facilityType,
-              cityOrVillage,
-              districtId,
-              state,
-              email,
-              experienceYears
-            }
-          };
-          users.push(cachedUser);
-          LS.set(DBK.users, users);
-          setSession(u.id);
-          showToast(`Registration successful! Saved in Aiven Enterprise DB (${data.latency_ms || "3"}ms)`, "success");
-          renderAll();
-          routeAfterLogin();
-          return;
+            fullName,
+            phone,
+            password,
+            workerUniqueId,
+            designation,
+            gender,
+            facilityName,
+            facilityType,
+            cityOrVillage,
+            districtId,
+            district: districtName,
+            state,
+            email,
+            experienceYears
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "success" && data.user) {
+            const u = data.user;
+            const curUsers = LS.get(DBK.users, []);
+            const uIdx = curUsers.findIndex((x) => x.id === u.id || cleanPhone(x.phone) === phone || (u.worker_unique_id && String(x.workerUniqueId || "").toUpperCase() === String(u.worker_unique_id).toUpperCase()));
+            const cachedUser = {
+              id: u.id,
+              role: u.role || ROLES.WORKER,
+              phone: u.phone || phone,
+              password: hashedPassword,
+              workerUniqueId: u.worker_unique_id || workerUniqueId,
+              fullName: u.full_name || fullName,
+              createdAt: u.created_at || nowIso(),
+              profile: {
+                designation: u.designation || designation,
+                gender,
+                facilityName: u.facility_name || facilityName,
+                facilityType: u.facility_type || facilityType,
+                cityOrVillage: u.city_or_village || cityOrVillage,
+                districtId: u.district_id || districtId,
+                district: u.district_name || districtName,
+                state: u.state || state,
+                email,
+                experienceYears
+              }
+            };
+            if (uIdx >= 0) curUsers[uIdx] = cachedUser;
+            else curUsers.push(cachedUser);
+            LS.set(DBK.users, curUsers);
+            setSession(u.id);
+            showToast(`Registration successful! Worker ID: ${cachedUser.workerUniqueId}`, "success");
+            renderAll();
+            routeAfterLogin();
+            return;
+          }
+        } else if (res.status === 400 || res.status === 409) {
+          const err = await res.json().catch(() => ({}));
+          if (err.message) return showToast(err.message, "error");
         }
-      } else if (res.status === 400 || res.status === 409) {
-        const err = await res.json().catch(() => ({}));
-        if (err.message) return showToast(err.message, "error");
       }
-    }
-  } catch (apiErr) {
+    } catch (apiErr) {
       console.warn("Backend registration offline, saving locally:", apiErr);
     }
 
     // 2. LOCAL OFFLINE CACHE FALLBACK
+    const curUsers = LS.get(DBK.users, []);
+    const localIdx = curUsers.findIndex((x) => cleanPhone(x.phone) === phone);
     const u = {
-      id: uuid(),
+      id: localIdx >= 0 ? curUsers[localIdx].id : uuid(),
       role: ROLES.WORKER,
       phone,
       password: hashedPassword,
-      workerUniqueId,
+      workerUniqueId: localIdx >= 0 ? (curUsers[localIdx].workerUniqueId || workerUniqueId) : workerUniqueId,
       fullName,
-      createdAt: nowIso(),
+      createdAt: localIdx >= 0 ? (curUsers[localIdx].createdAt || nowIso()) : nowIso(),
       profile: {
         designation,
         gender,
@@ -1137,19 +1142,21 @@
         facilityType,
         cityOrVillage,
         districtId,
+        district: districtName,
         state,
         email,
         experienceYears
       }
     };
 
-    users.push(u);
-    LS.set(DBK.users, users);
+    if (localIdx >= 0) curUsers[localIdx] = u;
+    else curUsers.push(u);
+    LS.set(DBK.users, curUsers);
     setSession(u.id);
 
-    showToast("Registration successful! Account created locally.", "success");
+    showToast(`Registration successful! Worker ID: ${u.workerUniqueId}`, "success");
     logEvent("worker_registration", {
-      workerUniqueId,
+      workerUniqueId: u.workerUniqueId,
       fullName,
       designation,
       facilityName,
@@ -1342,9 +1349,7 @@
   function getAttendance() {
     const list = LS.get(DBK.attendance, []);
     if (!Array.isArray(list)) return [];
-    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
-    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
-    return list.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
+    return list.filter((a) => a && (a.id || a.trainingId));
   }
 
   function saveAttendance(rows) {
@@ -1477,9 +1482,7 @@
   function getAttempts() {
     const list = LS.get(DBK.attempts, []);
     if (!Array.isArray(list)) return [];
-    const mockIds = ["JH559304", "JH176550", "JH782494", "JH254248", "JH695800"];
-    const mockPhones = ["7004369523", "9090909090", "9431590185", "7777777777", "8888888888"];
-    return list.filter((a) => !mockIds.includes(a.workerUniqueId) && !mockPhones.includes(a.phone) && typeof a.id === "string");
+    return list.filter((a) => a && (a.id || a.trainingId));
   }
 
   function saveAttempts(atts) {
@@ -3174,16 +3177,10 @@
     });
 
     byId("resetPilotDataBtn")?.addEventListener("click", () => {
-      if (confirm("Reset local test data for clean pilot testing? This will clear stale test workers, attendance, and attempts from this browser.")) {
-        purgeMockTestData();
-        localStorage.removeItem(DBK.attendance);
-        localStorage.removeItem(DBK.attempts);
+      if (confirm("Refresh local portal data from database? This will clear local cached queues and refresh users directly from the primary database.")) {
         localStorage.removeItem(DBK.offlineQueue);
-        const curUsers = LS.get(DBK.users, []);
-        if (Array.isArray(curUsers)) {
-          LS.set(DBK.users, curUsers.filter((u) => u.role === ROLES.ADMIN || u.phone === "9999999999"));
-        }
-        showToast("Local test data cleaned! Ready for real health workers.", "success");
+        syncFromCloudPrimary();
+        showToast("Portal data synchronized from database! Ready for real health workers.", "success");
         renderAll();
         updateQueueBadge();
       }
@@ -3495,24 +3492,9 @@
     // 0. Clean stale test data and invalid github.io API URL from browser storage for real pilot testing
     try {
       purgeMockTestData();
-      const PILOT_FLAG = "jh_pilot_v3_clean";
-      if (!localStorage.getItem(PILOT_FLAG)) {
-        localStorage.removeItem(DBK.attendance);
-        localStorage.removeItem(DBK.attempts);
-        localStorage.removeItem(DBK.offlineQueue);
-        const curUsers = LS.get(DBK.users, []);
-        if (Array.isArray(curUsers)) {
-          LS.set(DBK.users, curUsers.filter((u) => u.role === ROLES.ADMIN || u.phone === "9999999999"));
-        }
-        const cur = currentUser();
-        if (cur && cur.role !== ROLES.ADMIN) {
-          LS.remove(DBK.currentUser);
-        }
-        const storedApi = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
-        if (storedApi.includes("github.io") || storedApi.includes("pages.dev")) {
-          localStorage.removeItem(API_STORAGE_KEY);
-        }
-        localStorage.setItem(PILOT_FLAG, "true");
+      const storedApi = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
+      if (storedApi.includes("github.io") || storedApi.includes("pages.dev")) {
+        localStorage.removeItem(API_STORAGE_KEY);
       }
     } catch (_) {}
 
