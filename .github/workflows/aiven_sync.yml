@@ -1,0 +1,36 @@
+name: Aiven PostgreSQL Continuous Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs automatically every 6 hours
+    - cron: '0 */6 * * *'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary python-dotenv
+
+      - name: Export Aiven PostgreSQL Snapshot
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgres://avnadmin:AVNS_yag-iD7BkdGKwWw4jXs@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require' }}
+        run: |
+          python export_aiven_db.py
+
+      - name: Commit and push updated snapshot
+        run: |
+          git config --global user.name "Aiven Sync Bot"
+          git config --global user.email "bot@jh-health.gov.in"
+          git add aiven_db_master.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(sync): update aiven_db_master.json snapshot from Aiven Cloud PostgreSQL" && git push)

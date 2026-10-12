@@ -52,8 +52,23 @@
     return "";
   }
 
+  let detectedLocalApi = null;
+  async function probeLocalBackend() {
+    if (detectedLocalApi !== null) return detectedLocalApi;
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/health", { signal: AbortSignal.timeout(1200) });
+      if (res.ok) {
+        detectedLocalApi = "http://127.0.0.1:5000";
+        console.info("[Portal] Live Python backend detected on local machine. Direct Aiven DB sync active!");
+        return detectedLocalApi;
+      }
+    } catch (_) {}
+    detectedLocalApi = "";
+    return "";
+  }
+
   function apiUrl(endpoint) {
-    const base = getApiBaseUrl();
+    const base = getApiBaseUrl() || detectedLocalApi;
     const cleanPath = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
     if (base) {
       return base + cleanPath;
@@ -3377,6 +3392,22 @@
       showToast("Offline sync queue cleared", "info");
     });
 
+    byId("exportQueueBtn")?.addEventListener("click", () => {
+      const q = getQueue();
+      if (!q.length) {
+        showToast("Queue is currently empty. No offline actions to export.", "info");
+        return;
+      }
+      const blob = new Blob([JSON.stringify(q, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `offline_queue_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast(`Exported ${q.length} queued action(s) to JSON file.`, "success", 4000);
+    });
+
     // Admin filters & search
     byId("admCategoryFilter")?.addEventListener("change", renderAll);
     byId("admTrainingPick")?.addEventListener("change", renderAll);
@@ -3451,12 +3482,179 @@
     }
   }
 
+  function applyMasterSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return false;
+    let applied = false;
+
+    // 1. Users
+    if (Array.isArray(snapshot.users) && snapshot.users.length > 0) {
+      const existing = LS.get(DBK.users, []);
+      const prevMap = new Map();
+      existing.forEach((x) => {
+        if (x.id) prevMap.set(x.id, x);
+        if (x.phone) prevMap.set(x.phone, x);
+        if (x.workerUniqueId) prevMap.set(x.workerUniqueId, x);
+      });
+
+      const syncedUsers = snapshot.users.map((u) => {
+        const prev = prevMap.get(u.id) || prevMap.get(u.phone) || (u.worker_unique_id ? prevMap.get(u.worker_unique_id) : null) || {};
+        const isAdm = u.role === ROLES.ADMIN;
+        return {
+          id: u.id,
+          role: u.role || (isAdm ? ROLES.ADMIN : ROLES.WORKER),
+          phone: u.phone,
+          password: prev.password || u.password_hash || (isAdm ? "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0" : "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd"),
+          workerUniqueId: u.worker_unique_id || u.workerUniqueId || "",
+          fullName: u.full_name || u.fullName || "",
+          createdAt: u.created_at || prev.createdAt || nowIso(),
+          profile: {
+            designation: u.designation || prev.profile?.designation || "",
+            facilityName: u.facility_name || prev.profile?.facilityName || "",
+            facilityType: u.facility_type || prev.profile?.facilityType || "",
+            cityOrVillage: u.city_or_village || prev.profile?.cityOrVillage || "",
+            districtId: u.district_id || prev.profile?.districtId || "D-20",
+            district: u.district_name || prev.profile?.district || "Ranchi",
+            state: u.state || prev.profile?.state || "Jharkhand"
+          }
+        };
+      });
+
+      // Retain pending offline registrations
+      const queue = getQueue();
+      const pendingPhones = new Set(
+        queue
+          .map((q) => {
+            const p = q.payload || {};
+            const act = (p.action || p.type || p.event || "").toLowerCase();
+            if (act.includes("regist") || act === "user") {
+              return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
+            }
+            return null;
+          })
+          .filter(Boolean)
+      );
+
+      const unsyncedLocals = existing.filter((u) => pendingPhones.has(cleanPhone(u.phone)));
+      for (const loc of unsyncedLocals) {
+        if (!syncedUsers.some((su) => cleanPhone(su.phone) === cleanPhone(loc.phone))) {
+          syncedUsers.push(loc);
+        }
+      }
+      LS.set(DBK.users, syncedUsers);
+      applied = true;
+    }
+
+    // 2. Trainings
+    if (Array.isArray(snapshot.trainings) && snapshot.trainings.length > 0) {
+      const mapped = snapshot.trainings.map((t) => ({
+        id: t.id,
+        category: t.category,
+        status: t.status,
+        title: t.title,
+        mode: t.mode,
+        venue: t.venue,
+        startAt: t.start_at,
+        endAt: t.end_at,
+        attendanceEnabled: Boolean(t.attendance_enabled),
+        gpsRequired: Boolean(t.gps_required),
+        attendanceOpenAt: t.attendance_open_at,
+        attendanceCloseAt: t.attendance_close_at,
+        assessments: (typeof t.assessments_json === "object" && t.assessments_json !== null)
+          ? t.assessments_json
+          : (t.assessments_json ? (() => { try { return JSON.parse(t.assessments_json); } catch { return null; } })() : null) || { pre: JSON.parse(defaultPreJson()), post: JSON.parse(defaultPostJson()) },
+        createdAt: t.created_at,
+        updatedAt: t.updated_at
+      }));
+      LS.set(DBK.trainings, mapped);
+      applied = true;
+    }
+
+    // 3. Attendance
+    if (Array.isArray(snapshot.attendance)) {
+      const attMap = new Map();
+      snapshot.attendance.forEach((a) => {
+        const key = `${a.training_id}_${a.user_id}`;
+        attMap.set(key, {
+          id: a.id || uuid(),
+          trainingId: a.training_id,
+          userId: a.user_id,
+          workerUniqueId: a.worker_unique_id,
+          fullName: a.full_name,
+          phone: a.phone,
+          designation: a.designation,
+          facilityName: a.facility_name,
+          district: a.district_name,
+          attendanceStatus: a.status || "Present",
+          checkedInAt: a.checked_in_at || nowIso(),
+          gpsLat: null,
+          gpsLng: null
+        });
+      });
+      LS.set(DBK.attendance, Array.from(attMap.values()));
+      applied = true;
+    }
+
+    // 4. Attempts
+    if (Array.isArray(snapshot.attempts)) {
+      const trainings = LS.get(DBK.trainings, []);
+      const atmpMap = new Map();
+      snapshot.attempts.forEach((a) => {
+        const typeUpper = (a.test_type || "post").toUpperCase();
+        const match = trainings.find((t) => t.id === a.training_id || t.title === a.training_id || t.title === a.training_title);
+        const canonicalId = match ? match.id : a.training_id;
+        const key = `${canonicalId}_${a.user_id}_${typeUpper}`;
+        const qCount = (typeUpper === "PRE" ? match?.assessments?.pre?.length : match?.assessments?.post?.length) || 2;
+        let sc = Number(a.score != null ? a.score : 0);
+        let tm = Number(a.total_marks || qCount);
+        if (tm > 10 && qCount <= 10) {
+          sc = Math.round((Number(a.percent || 0) / 100) * qCount);
+          tm = qCount;
+        }
+        atmpMap.set(key, {
+          id: a.id || uuid(),
+          trainingId: canonicalId,
+          trainingTitle: a.training_title || match?.title || "",
+          userId: a.user_id,
+          workerUniqueId: a.worker_unique_id,
+          fullName: a.full_name,
+          phone: a.phone,
+          type: typeUpper,
+          score: sc,
+          totalMarks: tm,
+          percent: Number(a.percent != null ? a.percent : 0),
+          passed: Boolean(a.passed || (Number(a.percent || 0) >= 60)),
+          submittedAt: a.submitted_at || nowIso()
+        });
+      });
+      LS.set(DBK.attempts, Array.from(atmpMap.values()));
+      applied = true;
+    }
+
+    if (applied) {
+      LS.set(DBK.lastSync, nowIso());
+      setSyncStatus("success", "Aligned with Aiven Enterprise Database");
+    }
+    return applied;
+  }
+
   async function syncFromCloudPrimary() {
     const base = getApiBaseUrl();
     const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
     if (isStaticDeploy && !base) {
-      console.info("[Portal] Standalone PWA mode: master catalog active for real user testing.");
+      console.info("[Portal] GitHub Pages: fetching master Aiven DB snapshot...");
       seedDistricts();
+      try {
+        const snapRes = await fetch("./aiven_db_master.json", { cache: "no-cache" });
+        if (snapRes.ok) {
+          const snapshot = await snapRes.json();
+          if (applyMasterSnapshot(snapshot)) {
+            renderAll();
+            return;
+          }
+        }
+      } catch (e) {
+        console.debug("Snapshot fetch notice:", e);
+      }
       seedInitialUsers();
       seedMasterTrainings();
       renderAll();
@@ -3705,6 +3903,14 @@
 
     try {
       syncFromCloudPrimary();
+      probeLocalBackend().then((api) => {
+        if (api) {
+          syncFromCloudPrimary();
+          if (navigator.onLine && getQueue().length > 0) {
+            processOfflineQueue(true);
+          }
+        }
+      });
       if (navigator.onLine && getQueue().length > 0) {
         processOfflineQueue(true);
       }

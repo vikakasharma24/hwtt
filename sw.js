@@ -3,12 +3,13 @@
    Enables 100% offline access & installation for health workers
    ========================================================= */
 
-const CACHE_NAME = "jh-training-v21";
+const CACHE_NAME = "jh-training-v22";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./script.js",
+  "./aiven_db_master.json",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png"

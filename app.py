@@ -29,9 +29,17 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from ai_engine import ai_engine
 
-# Initialize Flask application
 app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)
+
+@app.after_request
+def add_pna_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Access-Control-Request-Private-Network"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    if request.headers.get("Access-Control-Request-Private-Network") == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 # Payload size limit protection (16 MB)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
