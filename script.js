@@ -4,6 +4,7 @@
   const GOOGLE_SCRIPT_URL = "";
   const PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1";
   const API_STORAGE_KEY = "jh_backend_api_url";
+  const DEFAULT_BACKEND_URL = "";
 
   function getApiBaseUrl() {
     try {
@@ -31,6 +32,10 @@
         }
       }
     } catch (_) {}
+
+    if (DEFAULT_BACKEND_URL) {
+      return DEFAULT_BACKEND_URL;
+    }
 
     if (window.location.port === "5000") {
       return "";
@@ -433,13 +438,11 @@
 
     const syncUrl = apiUrl("/api/sync/batch");
     if (!syncUrl) {
-      saveQueue([]);
-      refreshQueueUI();
-      LS.set(DBK.lastSync, nowIso());
-      setSyncStatus("success", "PWA Mode: Saved to device storage");
+      setSyncStatus("offline_queued", `${queue.length} action(s) saved in local offline queue`);
       if (!silent) {
-        showToast("Synchronized: All actions saved securely in device storage (GitHub Pages PWA Mode).", "success", 4000);
+        showToast(`Cannot sync to Aiven Cloud DB: Backend API server is not connected. ${queue.length} action(s) remain safely preserved in offline queue.`, "warn", 6000);
       }
+      refreshQueueUI();
       renderAll();
       return;
     }
@@ -724,31 +727,32 @@
       }
     ];
 
-    let changed = false;
+    // 1. Gather pending offline registrations from queue
+    const queue = getQueue();
+    const pendingPhones = new Set(
+      queue
+        .map((q) => {
+          const p = q.payload || {};
+          const act = (p.action || p.type || p.event || "").toLowerCase();
+          if (act.includes("regist") || act === "user") {
+            return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
+          }
+          return null;
+        })
+        .filter(Boolean)
+    );
 
-    // Ensure registered workers and admin are preserved in local store
-
-    for (const m of masterUsers) {
-      const idx = users.findIndex((u) => u.id === m.id || u.phone === m.phone || (m.workerUniqueId && u.workerUniqueId === m.workerUniqueId));
-      if (idx === -1) {
-        users.push(m);
-        changed = true;
-      } else {
-        const u = users[idx];
-        if (!u.workerUniqueId) { u.workerUniqueId = m.workerUniqueId; changed = true; }
-        if (!u.fullName) { u.fullName = m.fullName; changed = true; }
-        if (!u.role) { u.role = m.role; changed = true; }
-        if (!u.password) { u.password = m.password; changed = true; }
-        if (!u.profile || !u.profile.district) {
-          u.profile = { ...(u.profile || {}), ...m.profile };
-          changed = true;
+    // 2. Build aligned users list matching Aiven DB baseline + pending offline workers
+    const alignedUsers = [...masterUsers];
+    for (const u of users) {
+      if (u && u.phone && pendingPhones.has(cleanPhone(u.phone))) {
+        if (!alignedUsers.some((au) => cleanPhone(au.phone) === cleanPhone(u.phone))) {
+          alignedUsers.push(u);
         }
       }
     }
 
-    if (changed) {
-      LS.set(DBK.users, users);
-    }
+    LS.set(DBK.users, alignedUsers);
   }
 
   // Alias for backward compatibility
