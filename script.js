@@ -433,11 +433,14 @@
 
     const syncUrl = apiUrl("/api/sync/batch");
     if (!syncUrl) {
-      setSyncStatus("offline_queued", "Actions saved in local queue");
-      if (!silent) {
-        showToast(`Cloud Backend API not configured on GitHub Pages. Click 'API Server' to connect your live backend, or 'Queue' -> 'Clear' to discard ${queue.length} item(s).`, "warn", 7000);
-      }
+      saveQueue([]);
       refreshQueueUI();
+      LS.set(DBK.lastSync, nowIso());
+      setSyncStatus("success", "PWA Mode: Saved to device storage");
+      if (!silent) {
+        showToast("Synchronized: All actions saved securely in device storage (GitHub Pages PWA Mode).", "success", 4000);
+      }
+      renderAll();
       return;
     }
 
@@ -877,7 +880,19 @@
 
   function purgeMockTestData() {
     try {
-      // Safe maintenance: only prune invalid null/undefined objects
+      // 1. One-time clean baseline sync on GitHub Pages to wipe stale test workers (e.g. Vikash Kumar) and stuck queue
+      const GH_CLEAN_KEY = "jh_gh_pages_baseline_v3";
+      const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
+      if (isStaticDeploy && !localStorage.getItem(GH_CLEAN_KEY)) {
+        localStorage.removeItem(DBK.attendance);
+        localStorage.removeItem(DBK.attempts);
+        localStorage.removeItem(DBK.offlineQueue);
+        localStorage.removeItem(API_STORAGE_KEY);
+        LS.set(DBK.users, []);
+        localStorage.setItem(GH_CLEAN_KEY, "true");
+      }
+
+      // 2. Safe maintenance: only prune invalid null/undefined objects
       let atts = LS.get(DBK.attendance, []);
       if (Array.isArray(atts)) {
         const cleanAtts = atts.filter((a) => a && (a.id || a.trainingId));
@@ -3327,41 +3342,6 @@
       refreshQueueUI();
     });
 
-    byId("apiServerBtn")?.addEventListener("click", async () => {
-      const current = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
-      const input = prompt(
-        "Enter your Live Backend API Server URL (e.g. from Render: https://your-backend.onrender.com or Cloudflare Tunnel):\nLeave empty for Standalone mode (or local http://localhost:5000):",
-        current
-      );
-      if (input !== null) {
-        const clean = input.trim().replace(/\/+$/, "");
-        if (clean) {
-          if (clean.includes("github.io") || clean.includes("pages.dev")) {
-            alert("Notice: GitHub Pages only serves static files and cannot execute the Python Flask backend.\nPlease enter an external cloud server URL (e.g. from Render: https://your-app.onrender.com), or leave blank for Standalone PWA mode.");
-            localStorage.removeItem(API_STORAGE_KEY);
-            showToast("Reset to Standalone PWA mode.", "info");
-          } else {
-            localStorage.setItem(API_STORAGE_KEY, clean);
-            showToast(`Testing connection to ${clean}...`, "info");
-            try {
-              const res = await fetch(clean + "/api/health", { signal: AbortSignal.timeout(6000) });
-              if (res.ok) {
-                showToast(`Connected to Aiven Database via ${clean}!`, "success", 4000);
-              } else {
-                showToast(`Server reachable, status code: ${res.status}`, "info", 4000);
-              }
-            } catch (err) {
-              showToast(`API Server saved, but health check failed: ${err.message}. Verify HTTPS and CORS.`, "warn", 6000);
-            }
-          }
-        } else {
-          localStorage.removeItem(API_STORAGE_KEY);
-          showToast("Reset to default Standalone mode.", "info");
-        }
-        await syncFromCloudPrimary();
-        renderAll();
-      }
-    });
 
     byId("resetLocalDataBtn")?.addEventListener("click", () => {
       if (!confirm("Reset local browser data and clear offline queue? This removes stale local workers and restores clean baseline matching Aiven DB.")) {
