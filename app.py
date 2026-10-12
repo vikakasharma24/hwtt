@@ -764,50 +764,60 @@ def auth_login():
     }), 200
 
 
-@app.route("/api/auth/register", methods=["POST"])
-def auth_register():
-    """Enterprise (<5ms) registration of new frontline health worker into Aiven PostgreSQL."""
-    t0 = datetime.now()
-    data = request.get_json() or {}
-    raw_phone = (data.get("phone") or "").strip()
-    full_name = (data.get("fullName") or data.get("full_name") or "").strip()
-    password = (data.get("password") or "").strip()
+def save_user_registration_record(data: dict) -> dict:
+    """Enterprise registration / upsert of frontline health worker into Aiven PostgreSQL."""
+    if not isinstance(data, dict):
+        return {"status": "error", "message": "Invalid user data", "code": 400}
 
-    # Normalize phone: strip +91, spaces, dashes
-    clean_phone = raw_phone.replace(" ", "").replace("-", "")
-    if clean_phone.startswith("+91"):
-        clean_phone = clean_phone[3:]
-    elif clean_phone.startswith("91") and len(clean_phone) == 12 and clean_phone.isdigit():
-        clean_phone = clean_phone[2:]
+    u_obj = data.get("user") if isinstance(data.get("user"), dict) else data
+    raw_phone = str(u_obj.get("phone") or u_obj.get("actorPhone") or "").strip()
+    full_name = str(u_obj.get("fullName") or u_obj.get("full_name") or u_obj.get("actorName") or "").strip()
+    password = str(u_obj.get("password") or "").strip()
 
+    clean_phone = normalize_phone_num(raw_phone)
     if not clean_phone or len(clean_phone) != 10 or not clean_phone.isdigit():
-        return jsonify({"status": "error", "message": "Valid 10-digit mobile number required"}), 400
+        return {"status": "error", "message": "Valid 10-digit mobile number required", "code": 400}
     if not full_name:
-        return jsonify({"status": "error", "message": "Full name is required"}), 400
-    if not password or len(password) < 6:
-        return jsonify({"status": "error", "message": "Password (minimum 6 characters) is required"}), 400
+        full_name = f"Worker {clean_phone[-4:]}"
 
-    phone = clean_phone
-    user_id = str(uuid.uuid4())
-    worker_unique_id = (data.get("workerUniqueId") or "").strip()
+    user_id = str(u_obj.get("id") or u_obj.get("userId") or u_obj.get("user_id") or uuid.uuid4())
+    worker_unique_id = str(u_obj.get("workerUniqueId") or u_obj.get("worker_unique_id") or "").strip()
     if not worker_unique_id:
         worker_unique_id = "JH" + str(uuid.uuid4().int)[:6]
-    pwd_hash = hash_password(password)
+
+    pwd_hash = str(u_obj.get("password_hash") or u_obj.get("passwordHash") or "").strip()
+    if not pwd_hash:
+        if password and len(password) >= 6:
+            pwd_hash = hash_password(password)
+        else:
+            pwd_hash = hash_password("123456")
+
+    role = str(u_obj.get("role") or "WORKER").strip().upper()
+    if role not in ("ADMIN", "WORKER"):
+        role = "WORKER"
+
+    designation = str(u_obj.get("designation") or (u_obj.get("profile", {}).get("designation") if isinstance(u_obj.get("profile"), dict) else "") or "Other").strip()
+    facility_name = str(u_obj.get("facilityName") or u_obj.get("facility_name") or (u_obj.get("profile", {}).get("facilityName") if isinstance(u_obj.get("profile"), dict) else "") or "").strip()
+    facility_type = str(u_obj.get("facilityType") or u_obj.get("facility_type") or (u_obj.get("profile", {}).get("facilityType") if isinstance(u_obj.get("profile"), dict) else "") or "Other").strip()
+    city_or_village = str(u_obj.get("cityOrVillage") or u_obj.get("city_or_village") or (u_obj.get("profile", {}).get("cityOrVillage") if isinstance(u_obj.get("profile"), dict) else "") or "").strip()
+    district_id = str(u_obj.get("districtId") or u_obj.get("district_id") or (u_obj.get("profile", {}).get("districtId") if isinstance(u_obj.get("profile"), dict) else "") or "").strip()
+    district_name = str(u_obj.get("district") or u_obj.get("district_name") or (u_obj.get("profile", {}).get("district") if isinstance(u_obj.get("profile"), dict) else "") or "Ranchi").strip()
+    state = str(u_obj.get("state") or (u_obj.get("profile", {}).get("state") if isinstance(u_obj.get("profile"), dict) else "") or "Jharkhand").strip()
 
     new_user = {
         "id": user_id,
         "worker_unique_id": worker_unique_id,
-        "phone": phone,
+        "phone": clean_phone,
         "password_hash": pwd_hash,
-        "role": data.get("role", "WORKER"),
+        "role": role,
         "full_name": full_name,
-        "designation": data.get("designation", "Other"),
-        "facility_name": data.get("facilityName", ""),
-        "facility_type": data.get("facilityType", "Other"),
-        "city_or_village": data.get("cityOrVillage", ""),
-        "district_id": data.get("districtId", ""),
-        "district_name": data.get("district", ""),
-        "state": data.get("state", "Jharkhand"),
+        "designation": designation,
+        "facility_name": facility_name,
+        "facility_type": facility_type,
+        "city_or_village": city_or_village,
+        "district_id": district_id,
+        "district_name": district_name,
+        "state": state,
         "is_active": 1
     }
 
@@ -821,17 +831,18 @@ def auth_register():
                         (id, worker_unique_id, phone, password_hash, role, full_name,
                          designation, facility_name, facility_type, city_or_village,
                          district_id, district_name, state, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
                     ON CONFLICT (phone) DO UPDATE SET
-                        password_hash = EXCLUDED.password_hash,
+                        worker_unique_id = COALESCE(EXCLUDED.worker_unique_id, {tbl}.worker_unique_id),
+                        password_hash = COALESCE(EXCLUDED.password_hash, {tbl}.password_hash),
                         full_name = EXCLUDED.full_name,
-                        designation = EXCLUDED.designation,
-                        facility_name = EXCLUDED.facility_name,
-                        facility_type = EXCLUDED.facility_type,
-                        city_or_village = EXCLUDED.city_or_village,
-                        district_id = EXCLUDED.district_id,
-                        district_name = EXCLUDED.district_name,
-                        state = EXCLUDED.state,
+                        designation = COALESCE(EXCLUDED.designation, {tbl}.designation),
+                        facility_name = COALESCE(EXCLUDED.facility_name, {tbl}.facility_name),
+                        facility_type = COALESCE(EXCLUDED.facility_type, {tbl}.facility_type),
+                        city_or_village = COALESCE(EXCLUDED.city_or_village, {tbl}.city_or_village),
+                        district_id = COALESCE(EXCLUDED.district_id, {tbl}.district_id),
+                        district_name = COALESCE(EXCLUDED.district_name, {tbl}.district_name),
+                        state = COALESCE(EXCLUDED.state, {tbl}.state),
                         is_active = 1
                     RETURNING id, worker_unique_id, phone, role, full_name, designation,
                               facility_name, facility_type, city_or_village, district_id,
@@ -841,19 +852,40 @@ def auth_register():
                     new_user["password_hash"], new_user["role"], new_user["full_name"],
                     new_user["designation"], new_user["facility_name"], new_user["facility_type"],
                     new_user["city_or_village"], new_user["district_id"], new_user["district_name"],
-                    new_user["state"], new_user["is_active"]
+                    new_user["state"]
                 ))
                 saved_row = cur.fetchone()
                 if saved_row:
                     new_user.update(saved_row)
+            try:
+                conn.commit()
+            except Exception:
+                pass
         except Exception as e:
-            logger.error("Failed to write new user to PostgreSQL: %s", e)
+            logger.error("Failed to write/sync user to PostgreSQL: %s", e)
+            return {"status": "partial", "message": str(e), "code": 500, "user": new_user}
         finally:
             conn.close()
 
-    # Always persist to in-memory store
     in_memory_db["users"][new_user["id"]] = new_user
+    return {"status": "success", "message": "Worker registered successfully", "code": 201, "user": new_user}
 
+
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    """Enterprise (<5ms) registration of new frontline health worker into Aiven PostgreSQL."""
+    t0 = datetime.now()
+    data = request.get_json() or {}
+    password = (data.get("password") or "").strip()
+    if not password or len(password) < 6:
+        if not data.get("password_hash") and not data.get("passwordHash"):
+            return jsonify({"status": "error", "message": "Password (minimum 6 characters) is required"}), 400
+
+    res = save_user_registration_record(data)
+    if res.get("code") not in (200, 201):
+        return jsonify({"status": "error", "message": res.get("message", "Registration failed")}), res.get("code", 400)
+
+    new_user = res.get("user", {})
     log_event_async("worker_registration", {
         "workerUniqueId": new_user.get("worker_unique_id"),
         "fullName": new_user.get("full_name"),
@@ -863,7 +895,8 @@ def auth_register():
         "facilityType": new_user.get("facility_type"),
         "cityOrVillage": new_user.get("city_or_village"),
         "district": new_user.get("district_name"),
-        "state": new_user.get("state")
+        "state": new_user.get("state"),
+        "_skip_relational": True
     })
 
     elapsed_ms = (datetime.now() - t0).total_seconds() * 1000
@@ -1302,6 +1335,10 @@ def save_attendance_record(data: dict) -> dict:
                     training_id, user_id, worker_unique_id, full_name,
                     phone, designation, facility_name, district_name, status, checked_in_at
                 ))
+            try:
+                conn.commit()
+            except Exception:
+                pass
         except Exception as e:
             logger.error("Failed to write attendance to PostgreSQL: %s", e)
             return {"status": "partial", "message": str(e), "code": 500}
@@ -1426,6 +1463,10 @@ def save_assessment_record(data: dict, is_sync: bool = False) -> dict:
                     u_desig, u_fac, u_dist, test_type_val, score_val, total_marks_val,
                     percent_val, 1 if percent_val >= 60 else 0, submitted_at
                 ))
+            try:
+                conn.commit()
+            except Exception:
+                pass
         except Exception as write_err:
             logger.error("Error persisting assessment to PostgreSQL: %s", write_err)
             return {"status": "partial", "message": str(write_err), "code": 500}
@@ -1468,7 +1509,7 @@ def record_attendance():
 def sync_batch_api():
     """Enterprise Offline-to-Cloud Batch Synchronization API.
     Accepts offline queued actions, processes them in logical order:
-    Attendance first -> Pre-Test second -> Post-Test third -> Event logs.
+    User Registrations first -> Attendance second -> Pre-Test third -> Post-Test fourth -> Event logs fifth.
     """
     t0 = datetime.now()
     raw = request.get_json() or {}
@@ -1481,11 +1522,13 @@ def sync_batch_api():
     else:
         items = [raw] if raw else []
 
+    usr_count = 0
     att_count = 0
     atmp_count = 0
     asm_count = 0
     event_ids = []
 
+    user_items = []
     att_items = []
     pre_items = []
     post_items = []
@@ -1496,7 +1539,12 @@ def sync_batch_api():
             continue
         act = str(item.get("action") or item.get("type") or item.get("event") or "").strip().lower()
         tt = str(item.get("test_type") or item.get("testType") or item.get("type") or "").strip().lower()
-        if act == "attendance":
+
+        if act in ("worker_registration", "user_registration", "register", "user_register") or (
+            item.get("workerUniqueId") and item.get("phone") and (item.get("fullName") or item.get("full_name")) and ("regist" in act or act == "user")
+        ):
+            user_items.append(item)
+        elif act == "attendance":
             att_items.append(item)
         elif act in ("assessment", "attempt"):
             if tt == "pre":
@@ -1506,7 +1554,16 @@ def sync_batch_api():
         else:
             other_items.append(item)
 
-    # 1. Process Attendance first
+    # 0. Process User Registrations first
+    for it in user_items:
+        res = save_user_registration_record(it)
+        if res.get("code") in (200, 201, 500):
+            usr_count += 1
+        eid = log_event_async("worker_registration", {**it, "_skip_relational": True})
+        if eid:
+            event_ids.append(eid)
+
+    # 1. Process Attendance second
     for it in att_items:
         res = save_attendance_record(it)
         if res.get("code") in (200, 500):
@@ -1515,7 +1572,7 @@ def sync_batch_api():
         if eid:
             event_ids.append(eid)
 
-    # 2. Process Pre-Tests second
+    # 2. Process Pre-Tests third
     for it in pre_items:
         it["test_type"] = "pre"
         res = save_assessment_record(it, is_sync=True)
@@ -1525,7 +1582,7 @@ def sync_batch_api():
         if eid:
             event_ids.append(eid)
 
-    # 3. Process Post-Tests third
+    # 3. Process Post-Tests fourth
     for it in post_items:
         it["test_type"] = "post"
         res = save_assessment_record(it, is_sync=True)
@@ -1536,7 +1593,7 @@ def sync_batch_api():
         if eid:
             event_ids.append(eid)
 
-    # 4. Process Other Events
+    # 4. Process Other Events fifth
     for it in other_items:
         ev_type = it.get("type") or it.get("event") or "general_event"
         eid = log_event_async(ev_type, {**it, "_skip_relational": True})
@@ -1545,8 +1602,8 @@ def sync_batch_api():
 
     elapsed_ms = (datetime.now() - t0).total_seconds() * 1000
     logger.info(
-        "Batch Sync Processed: Total=%d (Attendance=%d, Attempts=%d, Assessments=%d) in %.2fms",
-        len(items), att_count, atmp_count, asm_count, elapsed_ms
+        "Batch Sync Processed: Total=%d (Users=%d, Attendance=%d, Attempts=%d, Assessments=%d) in %.2fms",
+        len(items), usr_count, att_count, atmp_count, asm_count, elapsed_ms
     )
 
     return jsonify({
@@ -1554,6 +1611,7 @@ def sync_batch_api():
         "ok": True,
         "message": f"Synchronized {len(items)} offline action(s) to Aiven Enterprise Database.",
         "synced_count": len(items),
+        "users_synced": usr_count,
         "attendance_synced": att_count,
         "attempts_synced": atmp_count,
         "assessments_synced": asm_count,
@@ -1598,7 +1656,9 @@ def log_event_async(event_type: str, data: dict) -> int:
     """Helper to persist event into Aiven PostgreSQL and ensure relational sync."""
     if not data.get("_skip_relational"):
         try:
-            if event_type == "attendance" or data.get("attendanceStatus"):
+            if event_type in ("worker_registration", "user_registration") or data.get("action") in ("worker_registration", "user_registration") or "regist" in event_type:
+                save_user_registration_record(data)
+            elif event_type == "attendance" or data.get("attendanceStatus"):
                 save_attendance_record(data)
             elif event_type in ("assessment", "attempt") or data.get("testType") or data.get("test_type"):
                 save_assessment_record(data, is_sync=True)
@@ -1653,6 +1713,10 @@ def log_event_async(event_type: str, data: dict) -> int:
                 ))
                 row = cur.fetchone()
                 event_id = row["id"] if row else 0
+            try:
+                conn.commit()
+            except Exception:
+                pass
         except Exception as e:
             logger.debug("Async log persistence notice: %s", e)
         finally:
@@ -1998,29 +2062,119 @@ def get_recommendations(user_id: str):
 
 @app.route("/api/admin/clean-test-data", methods=["POST"])
 def clean_test_data():
-    """Wipes test submissions, attendance, attempts, assessments, and AI recommendations
-    for fresh testing, while preserving users and training catalog.
+    """Wipes test submissions, attendance, attempts, assessments, event logs, and AI recommendations
+    and resets users to the clean baseline 3 users (Admin + 2 standard workers).
     """
+    baseline_users = [
+        {
+            "id": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+            "worker_unique_id": "ADMIN-000001",
+            "phone": "9999999999",
+            "password_hash": "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0",
+            "role": "ADMIN",
+            "full_name": "State Admin",
+            "designation": "State Health Administrator",
+            "facility_name": "NHM HQ",
+            "facility_type": "State HQ",
+            "city_or_village": "Ranchi",
+            "district_id": "D-20",
+            "district_name": "Ranchi",
+            "state": "Jharkhand",
+            "is_active": 1
+        },
+        {
+            "id": "730d0212-b302-4a66-a1f7-bb70d7a7a188",
+            "worker_unique_id": "JH148750",
+            "phone": "9820194605",
+            "password_hash": "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd",
+            "role": "WORKER",
+            "full_name": "Test Offline Worker JH148750",
+            "designation": "ANM",
+            "facility_name": "Namkum CHC",
+            "facility_type": "Other",
+            "city_or_village": "",
+            "district_id": "D-20",
+            "district_name": "Ranchi",
+            "state": "Jharkhand",
+            "is_active": 1
+        },
+        {
+            "id": "5d3a4e83-8cff-41ef-af42-0c85c16ab048",
+            "worker_unique_id": "JH201884",
+            "phone": "9876543210",
+            "password_hash": "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd",
+            "role": "WORKER",
+            "full_name": "Uniyal Infratech",
+            "designation": "ANM",
+            "facility_name": "chutia",
+            "facility_type": "PHC",
+            "city_or_village": "Ranchi",
+            "district_id": "D-20",
+            "district_name": "Ranchi",
+            "state": "Jharkhand",
+            "is_active": 1
+        }
+    ]
+
     in_memory_db["attempts"] = []
     in_memory_db["assessments"] = []
     in_memory_db["attendance"] = []
     in_memory_db["ai_remedial_recommendations"] = {}
     in_memory_db["event_logs"] = []
+    in_memory_db["users"] = {u["id"]: u for u in baseline_users}
 
     conn = get_db_connection()
     if conn:
         try:
             with conn.cursor() as cur:
+                # 1. Clean telemetry tables
                 for t in ["attempts", "assessments", "ai_remedial_recommendations", "attendance", "event_logs"]:
                     try:
                         resolved = resolve_table_name(cur, [t, t.rstrip("s"), t.capitalize()], t)
                         cur.execute(f"DELETE FROM {resolved};")
                     except Exception as e:
                         logger.warning("Could not delete from %s: %s", t, e)
-            logger.info("Admin action: Cleaned test data across Aiven PostgreSQL tables.")
+
+                # 2. Reset users table to clean baseline
+                tbl_u = resolve_table_name(cur, ["users", "user", "Users"], "users")
+                cur.execute(f"DELETE FROM {tbl_u} WHERE phone NOT IN ('9999999999', '9820194605', '9876543210');")
+                for u in baseline_users:
+                    cur.execute(f"""
+                        INSERT INTO {tbl_u}
+                            (id, worker_unique_id, phone, password_hash, role, full_name,
+                             designation, facility_name, facility_type, city_or_village,
+                             district_id, district_name, state, is_active)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                        ON CONFLICT (phone) DO UPDATE SET
+                            worker_unique_id = EXCLUDED.worker_unique_id,
+                            full_name = EXCLUDED.full_name,
+                            role = EXCLUDED.role,
+                            password_hash = EXCLUDED.password_hash,
+                            designation = EXCLUDED.designation,
+                            facility_name = EXCLUDED.facility_name,
+                            facility_type = EXCLUDED.facility_type,
+                            city_or_village = EXCLUDED.city_or_village,
+                            district_id = EXCLUDED.district_id,
+                            district_name = EXCLUDED.district_name,
+                            state = EXCLUDED.state,
+                            is_active = 1;
+                    """, (
+                        u["id"], u["worker_unique_id"], u["phone"], u["password_hash"],
+                        u["role"], u["full_name"], u["designation"], u["facility_name"],
+                        u["facility_type"], u["city_or_village"], u["district_id"],
+                        u["district_name"], u["state"]
+                    ))
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            logger.info("Admin action: Cleaned test data across Aiven PostgreSQL tables and reset to baseline users.")
+            users_payload = [{k: v for k, v in u.items() if k != "password_hash"} for u in baseline_users]
             return jsonify({
                 "status": "success",
-                "message": "All test attempts, assessments, attendance, and AI recommendations have been cleanly reset for fresh testing.",
+                "message": "All test attempts, assessments, attendance, and AI recommendations have been cleanly reset, and users restored to baseline.",
+                "count": len(users_payload),
+                "users": users_payload,
                 "timestamp": datetime.now().isoformat()
             }), 200
         except Exception as e:
@@ -2029,9 +2183,12 @@ def clean_test_data():
         finally:
             conn.close()
 
+    users_payload = [{k: v for k, v in u.items() if k != "password_hash"} for u in baseline_users]
     return jsonify({
         "status": "success",
         "message": "All test attempts, assessments, attendance, and AI recommendations have been cleanly reset in memory.",
+        "count": len(users_payload),
+        "users": users_payload,
         "timestamp": datetime.now().isoformat()
     }), 200
 

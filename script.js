@@ -24,17 +24,24 @@
       const custom = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
       if (custom) {
         const clean = custom.replace(/\/+$/, "");
-        // If someone accidentally entered their GitHub Pages URL as the API server
         if (clean.includes("github.io") || clean.includes("pages.dev")) {
           localStorage.removeItem(API_STORAGE_KEY);
-          return "";
+        } else {
+          return clean;
         }
-        return clean;
       }
     } catch (_) {}
 
-    if (window.location.port === "5000" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    if (window.location.port === "5000") {
       return "";
+    }
+
+    if (window.location.protocol === "file:") {
+      return "http://localhost:5000";
+    }
+
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:5000`;
     }
 
     return "";
@@ -48,7 +55,7 @@
     }
     const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
     if (isStaticDeploy) {
-      return "";
+      return null;
     }
     return cleanPath;
   }
@@ -424,6 +431,16 @@
       return;
     }
 
+    const syncUrl = apiUrl("/api/sync/batch");
+    if (!syncUrl) {
+      setSyncStatus("offline_queued", "Actions saved in local queue");
+      if (!silent) {
+        showToast(`Cloud Backend API not configured on GitHub Pages. Click 'API Server' to connect your live backend, or 'Queue' -> 'Clear' to discard ${queue.length} item(s).`, "warn", 7000);
+      }
+      refreshQueueUI();
+      return;
+    }
+
     if (!silent) {
       showToast(`Syncing ${queue.length} offline action(s) to Aiven Cloud DB...`, "info");
     }
@@ -431,7 +448,7 @@
 
     // 1. Primary Unified Batch Sync to Cloud DB
     try {
-      const batchRes = await fetch(apiUrl("/api/sync/batch"), {
+      const batchRes = await fetch(syncUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(queue.map((q) => q.payload))
@@ -464,7 +481,16 @@
       let success = false;
 
       try {
-        if (action === "attendance") {
+        if (action === "worker_registration" || action === "user_registration" || action === "register") {
+          const regRes = await fetch(apiUrl("/api/auth/register"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(p.user || p)
+          });
+          if (regRes.ok || regRes.status === 409) {
+            success = true;
+          }
+        } else if (action === "attendance") {
           const res = await fetch(apiUrl("/api/attendance"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -482,7 +508,7 @@
 
         if (!success) {
           const evRes = await sendToSheet(p, true);
-          if (evRes && evRes.ok) success = true;
+          if (evRes && (evRes.ok || evRes.status === "logged_in_cloud_db" || evRes.event_id)) success = true;
         }
       } catch (e) {
         success = false;
@@ -636,6 +662,7 @@
     let users = LS.get(DBK.users, []);
     if (!Array.isArray(users)) users = [];
     const adminHash = "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0";
+    const workerHash = "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd";
 
     const masterUsers = [
       {
@@ -644,12 +671,48 @@
         phone: "9999999999",
         password: adminHash,
         role: ROLES.ADMIN,
-        fullName: "State Health Admin",
+        fullName: "State Admin",
         createdAt: nowIso(),
         profile: {
           designation: "State Health Administrator",
           facilityName: "NHM HQ",
           facilityType: "State HQ",
+          cityOrVillage: "Ranchi",
+          districtId: "D-20",
+          district: "Ranchi",
+          state: "Jharkhand"
+        }
+      },
+      {
+        id: "730d0212-b302-4a66-a1f7-bb70d7a7a188",
+        workerUniqueId: "JH148750",
+        phone: "9820194605",
+        password: workerHash,
+        role: ROLES.WORKER,
+        fullName: "Test Offline Worker JH148750",
+        createdAt: nowIso(),
+        profile: {
+          designation: "ANM",
+          facilityName: "Namkum CHC",
+          facilityType: "Other",
+          cityOrVillage: "",
+          districtId: "D-20",
+          district: "Ranchi",
+          state: "Jharkhand"
+        }
+      },
+      {
+        id: "5d3a4e83-8cff-41ef-af42-0c85c16ab048",
+        workerUniqueId: "JH201884",
+        phone: "9876543210",
+        password: workerHash,
+        role: ROLES.WORKER,
+        fullName: "Uniyal Infratech",
+        createdAt: nowIso(),
+        profile: {
+          designation: "ANM",
+          facilityName: "chutia",
+          facilityType: "PHC",
           cityOrVillage: "Ranchi",
           districtId: "D-20",
           district: "Ranchi",
@@ -1158,6 +1221,28 @@
     setSession(u.id);
 
     showToast(`Registration successful! Worker ID: ${u.workerUniqueId}`, "success");
+    addToQueue({
+      action: "worker_registration",
+      type: "worker_registration",
+      id: u.id,
+      userId: u.id,
+      workerUniqueId: u.workerUniqueId,
+      fullName: u.fullName,
+      phone: u.phone,
+      password: hashedPassword,
+      password_hash: hashedPassword,
+      role: u.role,
+      designation: u.profile.designation,
+      facilityName: u.profile.facilityName,
+      facilityType: u.profile.facilityType,
+      cityOrVillage: u.profile.cityOrVillage,
+      districtId: u.profile.districtId,
+      district: u.profile.district,
+      state: u.profile.state,
+      email: u.profile.email,
+      experienceYears: u.profile.experienceYears,
+      createdAt: u.createdAt
+    });
     logEvent("worker_registration", {
       workerUniqueId: u.workerUniqueId,
       fullName,
@@ -3032,9 +3117,35 @@
         headers: { "Content-Type": "application/json" }
       });
       if (res.ok) {
+        const json = await res.json().catch(() => ({}));
         LS.set(DBK.attempts, []);
         LS.set(DBK.attendance, []);
         LS.set(DBK.offlineQueue, []);
+
+        if (Array.isArray(json.users) && json.users.length > 0) {
+          const cleanUsers = json.users.map((u) => ({
+            id: u.id,
+            role: u.role,
+            phone: u.phone,
+            password: u.password_hash || (u.role === ROLES.ADMIN ? "4311d0246a19ce40a753e72109162eb05e23cc30f50bce584e3e2ed1123caed0" : "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd"),
+            workerUniqueId: u.worker_unique_id || "",
+            fullName: u.full_name || "",
+            createdAt: u.created_at || nowIso(),
+            profile: {
+              designation: u.designation || "",
+              facilityName: u.facility_name || "",
+              facilityType: u.facility_type || "",
+              cityOrVillage: u.city_or_village || "",
+              districtId: u.district_id || "D-20",
+              district: u.district_name || "Ranchi",
+              state: u.state || "Jharkhand"
+            }
+          }));
+          LS.set(DBK.users, cleanUsers);
+        } else {
+          LS.set(DBK.users, []);
+          seedInitialUsers();
+        }
 
         const remedial = document.getElementById("aiRemedialContainer");
         if (remedial) remedial.remove();
@@ -3216,29 +3327,54 @@
       refreshQueueUI();
     });
 
-    byId("apiServerBtn")?.addEventListener("click", () => {
+    byId("apiServerBtn")?.addEventListener("click", async () => {
       const current = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
       const input = prompt(
-        "Enter your Live Backend API Server URL (e.g. from Render: https://your-backend.onrender.com):\nLeave empty for Standalone PWA Mode (or local server http://localhost:5000):",
+        "Enter your Live Backend API Server URL (e.g. from Render: https://your-backend.onrender.com or Cloudflare Tunnel):\nLeave empty for Standalone mode (or local http://localhost:5000):",
         current
       );
       if (input !== null) {
         const clean = input.trim().replace(/\/+$/, "");
         if (clean) {
           if (clean.includes("github.io") || clean.includes("pages.dev")) {
-            alert("Notice: GitHub Pages only serves static files and cannot execute the Python Flask backend.\nPlease enter a cloud server URL (e.g. from Render: https://your-app.onrender.com), or leave blank for Standalone PWA mode.");
+            alert("Notice: GitHub Pages only serves static files and cannot execute the Python Flask backend.\nPlease enter an external cloud server URL (e.g. from Render: https://your-app.onrender.com), or leave blank for Standalone PWA mode.");
             localStorage.removeItem(API_STORAGE_KEY);
             showToast("Reset to Standalone PWA mode.", "info");
           } else {
             localStorage.setItem(API_STORAGE_KEY, clean);
-            showToast(`Backend API Server updated: ${clean}`, "success");
+            showToast(`Testing connection to ${clean}...`, "info");
+            try {
+              const res = await fetch(clean + "/api/health", { signal: AbortSignal.timeout(6000) });
+              if (res.ok) {
+                showToast(`Connected to Aiven Database via ${clean}!`, "success", 4000);
+              } else {
+                showToast(`Server reachable, status code: ${res.status}`, "info", 4000);
+              }
+            } catch (err) {
+              showToast(`API Server saved, but health check failed: ${err.message}. Verify HTTPS and CORS.`, "warn", 6000);
+            }
           }
         } else {
           localStorage.removeItem(API_STORAGE_KEY);
-          showToast("Reset to default Standalone PWA mode.", "info");
+          showToast("Reset to default Standalone mode.", "info");
         }
-        syncFromCloudPrimary();
+        await syncFromCloudPrimary();
+        renderAll();
       }
+    });
+
+    byId("resetLocalDataBtn")?.addEventListener("click", () => {
+      if (!confirm("Reset local browser data and clear offline queue? This removes stale local workers and restores clean baseline matching Aiven DB.")) {
+        return;
+      }
+      saveQueue([]);
+      LS.set(DBK.attempts, []);
+      LS.set(DBK.attendance, []);
+      LS.set(DBK.users, []);
+      seedInitialUsers();
+      refreshQueueUI();
+      renderAll();
+      showToast("Local data reset to clean baseline (matching Aiven DB)!", "success");
     });
 
     byId("closeQueueBtn")?.addEventListener("click", () => {
@@ -3382,6 +3518,28 @@
                 }
               };
             });
+
+            // Retain any locally registered offline workers that are currently pending in the offline queue
+            const queue = getQueue();
+            const pendingPhones = new Set(
+              queue
+                .map((q) => {
+                  const p = q.payload || {};
+                  const act = (p.action || p.type || p.event || "").toLowerCase();
+                  if (act.includes("regist") || act === "user") {
+                    return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
+                  }
+                  return null;
+                })
+                .filter(Boolean)
+            );
+
+            const unsyncedLocals = existing.filter((u) => pendingPhones.has(cleanPhone(u.phone)));
+            for (const loc of unsyncedLocals) {
+              if (!syncedUsers.some((su) => cleanPhone(su.phone) === cleanPhone(loc.phone))) {
+                syncedUsers.push(loc);
+              }
+            }
 
             LS.set(DBK.users, syncedUsers);
           }

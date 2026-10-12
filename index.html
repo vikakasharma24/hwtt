@@ -40,6 +40,7 @@
             Retry Sync
           </button>
           <button id="viewQueueBtn" class="btn small ghost" type="button" title="View offline queue">Queue</button>
+          <button id="apiServerBtn" class="btn small ghost" type="button" title="Configure Cloud Backend API Server URL">API Server</button>
           <button id="installAppBtn" class="btn small ghost hidden" type="button" title="Install App on Device">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -66,6 +67,7 @@
           <div class="row gap">
             <button id="queueSyncNowBtn" class="btn small" type="button">Sync Now</button>
             <button id="clearQueueBtn" class="btn small ghost" type="button">Clear</button>
+            <button id="resetLocalDataBtn" class="btn small ghost" type="button" title="Reset local storage to clean baseline data">Reset Local Data</button>
             <button id="closeQueueBtn" class="closeBtn" type="button" aria-label="Close Queue">&times;</button>
           </div>
         </div>
@@ -92,7 +94,7 @@
             <div class="form">
               <div class="field">
                 <label>Registered Phone Number or Worker ID</label>
-                <input id="loginPhone" type="text" maxlength="32" placeholder="e.g., 9999999999 or 7004369523" />
+                <input id="loginPhone" type="text" maxlength="32" placeholder="Enter Phone Number or Worker ID" />
               </div>
               <div class="field">
                 <label>Password</label>
@@ -491,7 +493,7 @@
 
           <div class="field">
             <label>Registered Phone Number * (10 digits)</label>
-            <input id="resetPhone" type="tel" maxlength="10" placeholder="e.g., 9876543210" />
+            <input id="resetPhone" type="tel" maxlength="10" placeholder="Enter 10-digit registered mobile" />
           </div>
 
           <div class="row2">
