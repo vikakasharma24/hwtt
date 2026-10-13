@@ -563,7 +563,7 @@ def execute_background_ai_triage(
     time_spent_seconds: int
 ) -> None:
     """TASK B: Asynchronous ML triage executed silently in the background."""
-    logger.info("TASK B: AI Inference for Worker [%s] on Module [%s]", user_id, module_name)
+    logger.info("TASK B: AI Inference for Worker [%s] on Module [%s] (score=%.1f)", user_id, module_name, post_test_score)
     try:
         conn = get_db_connection()
         failure_density = 0.0
@@ -573,27 +573,59 @@ def execute_background_ai_triage(
                 with conn.cursor() as cursor:
                     tbl_asm = resolve_table_name(cursor, ["assessments", "assessment", "Assessments"], "assessments")
                     tbl_rec = resolve_table_name(cursor, ["ai_remedial_recommendations"], "ai_remedial_recommendations")
+                    tbl_u = resolve_table_name(cursor, ["users", "user", "Users"], "users")
+
+                    # Resolve all identifier aliases for this worker (worker_unique_id, user_uuid, phone)
+                    cursor.execute(f"""
+                        SELECT id, worker_unique_id, phone 
+                        FROM {tbl_u} 
+                        WHERE id = %s OR worker_unique_id = %s OR phone = %s 
+                        LIMIT 1;
+                    """, (user_id, user_id, user_id))
+                    u_row = cursor.fetchone() or {}
+                    wid = u_row.get("worker_unique_id") or user_id
+                    uuid_val = u_row.get("id") or user_id
+                    uphone = u_row.get("phone") or user_id
+                    user_ids = list({u for u in [user_id, wid, uuid_val, uphone] if u})
+
+                    # Calculate failure density robustly across percentage-based assessments
                     cursor.execute(f"""
                         SELECT 
                             COUNT(*) AS total_count,
-                            SUM(CASE WHEN post_test_score < 60 THEN 1 ELSE 0 END) AS fail_count
+                            SUM(CASE 
+                                WHEN percent IS NOT NULL AND percent < 60 THEN 1
+                                WHEN percent IS NULL AND post_test_score < 60 AND post_test_score > 10 THEN 1
+                                WHEN percent IS NULL AND post_test_score <= 10 THEN 1
+                                ELSE 0 
+                            END) AS fail_count
                         FROM {tbl_asm} 
-                        WHERE user_id = %s
-                    """, (user_id,))
+                        WHERE user_id = ANY(%s)
+                    """, (user_ids,))
                     stats = cursor.fetchone() or {}
                     total = stats.get("total_count") or 0
                     fails = stats.get("fail_count") or 0
                     if total > 0:
                         failure_density = float(fails / total)
 
+                    norm_post = float(post_test_score)
+                    norm_pre = float(pre_test_score)
+
                     risk_level, confidence = ai_engine.evaluate_risk(
-                        pre_test_score=pre_test_score,
-                        post_test_score=post_test_score,
+                        pre_test_score=norm_pre,
+                        post_test_score=norm_post,
                         time_spent_seconds=time_spent_seconds,
                         historical_failure_density=failure_density
                     )
 
-                    if risk_level in ("High", "Medium"):
+                    # If score is passing (>= 60%) or evaluated Low risk, mark recommendation as resolved
+                    if norm_post >= 60.0 or risk_level == "Low":
+                        for target_uid in user_ids:
+                            cursor.execute(f"""
+                                UPDATE {tbl_rec} 
+                                SET is_resolved = 1, predicted_risk_level = 'Low', updated_at = CURRENT_TIMESTAMP
+                                WHERE user_id = %s AND module_name = %s
+                            """, (target_uid, module_name))
+                    elif risk_level in ("High", "Medium"):
                         remedial = ai_engine.get_remedial_metadata(module_name)
                         cursor.execute(f"""
                             INSERT INTO {tbl_rec}
@@ -610,15 +642,12 @@ def execute_background_ai_triage(
                                 is_resolved = 0,
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
-                            user_id, module_name, risk_level, remedial["topic_id"],
+                            wid, module_name, risk_level, remedial["topic_id"],
                             remedial["title"], remedial["video_url"], confidence, failure_density
                         ))
-                    else:
-                        cursor.execute(f"""
-                            UPDATE {tbl_rec} 
-                            SET is_resolved = 1, predicted_risk_level = 'Low'
-                            WHERE user_id = %s AND module_name = %s
-                        """, (user_id, module_name))
+                conn.commit()
+            except Exception as sql_err:
+                logger.error("Database error during AI triage for [%s]: %s", user_id, sql_err)
             finally:
                 conn.close()
     except Exception as e:
@@ -1398,6 +1427,20 @@ def save_assessment_record(data: dict, is_sync: bool = False) -> dict:
     else:
         percent_val = round(score_val, 2)
     percent_val = max(0.0, min(100.0, percent_val))
+
+    # Normalize pre and post scores to true percentages (0.0 to 100.0)
+    if test_type_val == "post":
+        post_score = percent_val
+        if pre_score <= 10.0 and total_marks_val > 0 and pre_score > 0:
+            pre_score = round((pre_score / total_marks_val) * 100, 2)
+    else:
+        if pre_score == 0 and score_val > 0:
+            pre_score = percent_val
+        elif pre_score <= 10.0 and total_marks_val > 0 and pre_score > 0:
+            pre_score = round((pre_score / total_marks_val) * 100, 2)
+        else:
+            pre_score = percent_val
+
     pre_score = max(0.0, min(100.0, pre_score))
     post_score = max(0.0, min(100.0, post_score))
     submitted_at = format_datetime_str(data.get("submittedAt") or data.get("submitted_at") or data.get("timestamp")) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1453,6 +1496,7 @@ def save_assessment_record(data: dict, is_sync: bool = False) -> dict:
                 tbl_u = resolve_table_name(cursor, ["users", "user", "Users"], "users")
                 tbl_asm = resolve_table_name(cursor, ["assessments", "assessment", "Assessments"], "assessments")
                 tbl_atmp = resolve_table_name(cursor, ["attempts", "attempt", "Attempts"], "attempts")
+                tbl_rec = resolve_table_name(cursor, ["ai_remedial_recommendations"], "ai_remedial_recommendations")
 
                 cursor.execute(f"""
                     SELECT id, worker_unique_id, full_name, phone, designation, facility_name, facility_type, district_name
@@ -1477,6 +1521,14 @@ def save_assessment_record(data: dict, is_sync: bool = False) -> dict:
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                     """, (u_wid, module_name, pre_score, post_score, time_spent, percent_val, 1 if percent_val >= 60 else 0, submitted_at))
 
+                    # Immediate resolution if passed
+                    if percent_val >= 60.0:
+                        cursor.execute(f"""
+                            UPDATE {tbl_rec}
+                            SET is_resolved = 1, predicted_risk_level = 'Low', updated_at = CURRENT_TIMESTAMP
+                            WHERE (user_id = %s OR user_id = %s OR user_id = %s) AND module_name = %s;
+                        """, (u_wid, u_uuid, user_id, module_name))
+
                 cursor.execute(f"""
                     INSERT INTO {tbl_atmp} 
                         (training_id, training_title, user_id, worker_unique_id, full_name, phone, designation, facility_name, district_name, test_type, score, total_marks, percent, passed, submitted_at)
@@ -1496,7 +1548,7 @@ def save_assessment_record(data: dict, is_sync: bool = False) -> dict:
         finally:
             conn.close()
 
-    # Trigger ML triage for post-test failures
+    # Trigger ML triage for post-tests
     if test_type_val == "post":
         bg_executor.submit(
             execute_background_ai_triage,
