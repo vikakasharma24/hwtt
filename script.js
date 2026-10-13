@@ -644,7 +644,16 @@
   function currentUser() {
     const s = LS.get(DBK.session, null);
     if (!s || !s.userId) return null;
-    return LS.get(DBK.users, []).find((u) => u.id === s.userId) || null;
+    const users = LS.get(DBK.users, []);
+    return (
+      users.find(
+        (u) =>
+          u &&
+          (u.id === s.userId ||
+            (u.phone && cleanPhone(u.phone) === cleanPhone(s.userId)) ||
+            (u.workerUniqueId && String(u.workerUniqueId).toUpperCase() === String(s.userId).toUpperCase()))
+      ) || null
+    );
   }
 
   function setSession(userId) {
@@ -783,32 +792,20 @@
       }
     ];
 
-    // 1. Gather pending offline registrations from queue
-    const queue = getQueue();
-    const pendingPhones = new Set(
-      queue
-        .map((q) => {
-          const p = q.payload || {};
-          const act = (p.action || p.type || p.event || "").toLowerCase();
-          if (act.includes("regist") || act === "user") {
-            return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
-          }
-          return null;
-        })
-        .filter(Boolean)
-    );
-
-    // 2. Build aligned users list matching Aiven DB baseline + pending offline workers
-    const alignedUsers = [...masterUsers];
+    // Ensure Admin always exists, while strictly preserving all registered workers
+    const uMap = new Map();
     for (const u of users) {
-      if (u && u.phone && pendingPhones.has(cleanPhone(u.phone))) {
-        if (!alignedUsers.some((au) => cleanPhone(au.phone) === cleanPhone(u.phone))) {
-          alignedUsers.push(u);
-        }
+      if (u && (u.id || u.phone)) {
+        uMap.set(u.id || u.phone, u);
+      }
+    }
+    for (const m of masterUsers) {
+      if (!uMap.has(m.id) && !uMap.has(m.phone)) {
+        uMap.set(m.id, m);
       }
     }
 
-    LS.set(DBK.users, alignedUsers);
+    LS.set(DBK.users, Array.from(uMap.values()));
   }
 
   // Alias for backward compatibility
@@ -1606,8 +1603,17 @@
       t.classList.toggle("active", t.dataset.view === viewId);
     });
 
+    applyRoleVisibility();
+    renderWhoami();
+
     if (viewId === "viewAuth") fillDistrictSelect();
+    if (viewId === "viewWorker") {
+      renderWorkerDashboard();
+      renderWorkerTrainings();
+    }
     if (viewId === "viewAdmin") {
+      renderAdminDashboard();
+      renderAdminTrainingSummary();
       syncFromCloudPrimary();
     }
   }
@@ -1615,9 +1621,10 @@
   function routeAfterLogin() {
     const u = currentUser();
     if (!u) return setActiveView("viewAuth");
+    applyRoleVisibility();
+    renderWhoami();
     if (u.role === ROLES.ADMIN) {
       if (window.removeRemedialBanner) window.removeRemedialBanner();
-      syncFromCloudPrimary();
       setActiveView("viewAdmin");
     } else {
       setActiveView("viewWorker");
@@ -3710,25 +3717,12 @@
         };
       });
 
-      // Retain pending offline registrations
-      const queue = getQueue();
-      const pendingPhones = new Set(
-        queue
-          .map((q) => {
-            const p = q.payload || {};
-            const act = (p.action || p.type || p.event || "").toLowerCase();
-            if (act.includes("regist") || act === "user") {
-              return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
-            }
-            return null;
-          })
-          .filter(Boolean)
-      );
-
-      const unsyncedLocals = existing.filter((u) => pendingPhones.has(cleanPhone(u.phone)));
-      for (const loc of unsyncedLocals) {
-        if (!syncedUsers.some((su) => cleanPhone(su.phone) === cleanPhone(loc.phone))) {
-          syncedUsers.push(loc);
+      // Retain existing registered users not present in the incoming snapshot
+      for (const loc of existing) {
+        if (loc && (loc.phone || loc.id)) {
+          if (!syncedUsers.some((su) => (loc.id && su.id === loc.id) || (loc.phone && cleanPhone(su.phone) === cleanPhone(loc.phone)))) {
+            syncedUsers.push(loc);
+          }
         }
       }
       LS.set(DBK.users, syncedUsers);
@@ -3892,25 +3886,12 @@
               };
             });
 
-            // Retain any locally registered offline workers that are currently pending in the offline queue
-            const queue = getQueue();
-            const pendingPhones = new Set(
-              queue
-                .map((q) => {
-                  const p = q.payload || {};
-                  const act = (p.action || p.type || p.event || "").toLowerCase();
-                  if (act.includes("regist") || act === "user") {
-                    return cleanPhone(p.phone || p.user?.phone || p.actorPhone);
-                  }
-                  return null;
-                })
-                .filter(Boolean)
-            );
-
-            const unsyncedLocals = existing.filter((u) => pendingPhones.has(cleanPhone(u.phone)));
-            for (const loc of unsyncedLocals) {
-              if (!syncedUsers.some((su) => cleanPhone(su.phone) === cleanPhone(loc.phone))) {
-                syncedUsers.push(loc);
+            // Retain any existing registered workers not yet in incoming sync
+            for (const loc of existing) {
+              if (loc && (loc.phone || loc.id)) {
+                if (!syncedUsers.some((su) => (loc.id && su.id === loc.id) || (loc.phone && cleanPhone(su.phone) === cleanPhone(loc.phone)))) {
+                  syncedUsers.push(loc);
+                }
               }
             }
 

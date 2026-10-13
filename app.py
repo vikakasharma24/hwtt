@@ -1515,8 +1515,8 @@ def sync_batch_api():
             user_items.append(item)
         elif act == "attendance":
             att_items.append(item)
-        elif act in ("assessment", "attempt"):
-            if tt == "pre":
+        elif act in ("assessment", "attempt", "test_submission", "test"):
+            if "pre" in tt:
                 pre_items.append(item)
             else:
                 post_items.append(item)
