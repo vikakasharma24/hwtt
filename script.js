@@ -239,6 +239,7 @@
     attendance: "jh_attendance",
     attempts: "jh_attempts",
     districts: "jh_districts",
+    categories: "jh_categories",
     session: "jh_session",
     lastSync: "jh_last_sync",
     lastSyncStatus: "jh_last_sync_status",
@@ -246,6 +247,77 @@
   };
 
   const ROLES = { ADMIN: "ADMIN", WORKER: "WORKER" };
+
+  /* ==========================
+     CLINICAL CATEGORIES
+     ========================== */
+  const DEFAULT_CATEGORIES = [
+    "Maternal Health",
+    "Child Health",
+    "Child Nutrition",
+    "Immunization",
+    "NCD",
+    "TB",
+    "Data Reporting",
+    "Other"
+  ];
+
+  function getCategories() {
+    const saved = LS.get(DBK.categories, []);
+    const trainings = LS.get(DBK.trainings, []);
+    const fromTrainings = Array.isArray(trainings) ? trainings.map((t) => t.category).filter(Boolean) : [];
+    const set = new Set([...DEFAULT_CATEGORIES, ...saved, ...fromTrainings]);
+    return Array.from(set);
+  }
+
+  function saveCategory(name) {
+    const clean = (name || "").trim();
+    if (!clean) return null;
+    const current = LS.get(DBK.categories, DEFAULT_CATEGORIES.slice());
+    if (!current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      current.push(clean);
+      LS.set(DBK.categories, current);
+    }
+    fillAllCategorySelects(clean);
+    logEvent("category_created", { category: clean }).catch(() => {});
+    return clean;
+  }
+
+  function fillAllCategorySelects(selectedCategory) {
+    const cats = getCategories();
+
+    // 1. Training Studio select (#tCategory)
+    const tCat = byId("tCategory");
+    if (tCat) {
+      const prev = selectedCategory || tCat.value || "Maternal Health";
+      tCat.innerHTML = cats.map((c) => `<option value="${c}">${c}</option>`).join("");
+      if (cats.includes(prev)) {
+        tCat.value = prev;
+      } else if (cats.length) {
+        tCat.value = cats[0];
+      }
+    }
+
+    // 2. Admin Cockpit Domain Filter (#admCategoryFilter)
+    const admCat = byId("admCategoryFilter");
+    if (admCat) {
+      const prev = admCat.value || "";
+      admCat.innerHTML =
+        `<option value="">All Health Categories</option>` +
+        cats.map((c) => `<option value="${c}">${c}</option>`).join("");
+      if (prev && cats.includes(prev)) admCat.value = prev;
+    }
+
+    // 3. Worker Dashboard Category Filter (#wCatFilter)
+    const wCat = byId("wCatFilter");
+    if (wCat) {
+      const prev = wCat.value || "";
+      wCat.innerHTML =
+        `<option value="">All Categories</option>` +
+        cats.map((c) => `<option value="${c}">${c}</option>`).join("");
+      if (prev && cats.includes(prev)) wCat.value = prev;
+    }
+  }
 
   /* ==========================
      DISTRICTS OF JHARKHAND
@@ -872,13 +944,14 @@
     if (!Array.isArray(existing) || existing.length === 0) {
       LS.set(DBK.trainings, masterTrainings);
     } else {
-      // Retain only valid clean master trainings
-      const allowedIds = new Set(masterTrainings.map((m) => m.id));
-      const filtered = existing.filter((t) => allowedIds.has(t.id));
+      // Retain all user-created and edited trainings without ever wiping them!
+      const merged = existing.slice();
       masterTrainings.forEach((m) => {
-        if (!filtered.some((t) => t.id === m.id)) filtered.push(m);
+        if (!merged.some((t) => t.id === m.id)) {
+          merged.push(m);
+        }
       });
-      LS.set(DBK.trainings, filtered.length > 0 ? filtered : masterTrainings);
+      LS.set(DBK.trainings, merged);
     }
   }
 
@@ -2700,24 +2773,308 @@
   }
 
   /* ==========================
-     ADMIN: TRAINING MANAGEMENT
+     ADMIN: TRAINING MANAGEMENT & VISUAL ASSESSMENT BUILDER
      ========================== */
+  let builderQuestions = {
+    pre: [],
+    post: []
+  };
+  let activeBuilderTab = "visual";
+
+  function initBuilderQuestions(preQuestions, postQuestions) {
+    if (Array.isArray(preQuestions) && preQuestions.length > 0) {
+      builderQuestions.pre = JSON.parse(JSON.stringify(preQuestions));
+    } else {
+      try {
+        builderQuestions.pre = JSON.parse(defaultPreJson());
+      } catch {
+        builderQuestions.pre = [];
+      }
+    }
+
+    if (Array.isArray(postQuestions) && postQuestions.length > 0) {
+      builderQuestions.post = JSON.parse(JSON.stringify(postQuestions));
+    } else {
+      try {
+        builderQuestions.post = JSON.parse(defaultPostJson());
+      } catch {
+        builderQuestions.post = [];
+      }
+    }
+
+    renderVisualQuestions();
+    syncVisualToJson();
+  }
+
+  function syncVisualToJson() {
+    const preJsonEl = byId("tPreJson");
+    const postJsonEl = byId("tPostJson");
+    if (preJsonEl) preJsonEl.value = JSON.stringify(builderQuestions.pre, null, 2);
+    if (postJsonEl) postJsonEl.value = JSON.stringify(builderQuestions.post, null, 2);
+  }
+
+  function syncJsonToVisual() {
+    const preJsonEl = byId("tPreJson");
+    const postJsonEl = byId("tPostJson");
+    if (preJsonEl && preJsonEl.value.trim()) {
+      try {
+        const parsed = JSON.parse(preJsonEl.value.trim());
+        if (Array.isArray(parsed)) builderQuestions.pre = parsed;
+      } catch (_) {}
+    }
+    if (postJsonEl && postJsonEl.value.trim()) {
+      try {
+        const parsed = JSON.parse(postJsonEl.value.trim());
+        if (Array.isArray(parsed)) builderQuestions.post = parsed;
+      } catch (_) {}
+    }
+    renderVisualQuestions();
+  }
+
+  function renderVisualQuestions() {
+    renderQuestionList("pre");
+    renderQuestionList("post");
+  }
+
+  function renderQuestionList(type) {
+    const container = byId(`${type}QuestionList`);
+    const countEl = byId(`${type}QuestionCount`);
+    if (!container) return;
+
+    const list = builderQuestions[type] || [];
+    if (countEl) countEl.textContent = `${list.length} Question${list.length === 1 ? "" : "s"}`;
+
+    if (list.length === 0) {
+      container.innerHTML = `
+        <div class="emptyQuestionPlaceholder">
+          No ${type === "pre" ? "Pre-Test" : "Post-Test"} questions yet. Click <b>"➕ Add ${type === "pre" ? "Pre-Test" : "Post-Test"} Question"</b> above to add one.
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = list.map((q, idx) => {
+      const isMcq = (q.type || "MCQ").toUpperCase() === "MCQ";
+      const marks = q.marks != null ? q.marks : 1;
+      const options = Array.isArray(q.options) ? q.options.slice() : ["", "", "", ""];
+      while (options.length < 4) options.push("");
+      const letters = ["A", "B", "C", "D"];
+
+      return `
+        <div class="questionCard" data-q-type="${type}" data-q-index="${idx}">
+          <div class="qCardHead">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="qNumBadge">Q${idx + 1}</span>
+              <select class="qTypeSelect" data-action="change-type" data-type="${type}" data-index="${idx}">
+                <option value="MCQ" ${isMcq ? "selected" : ""}>Multiple Choice (MCQ)</option>
+                <option value="TF" ${!isMcq ? "selected" : ""}>True / False</option>
+              </select>
+            </div>
+            <div class="qCardControls">
+              <label style="font-size:11px;color:var(--text-muted);margin:0;display:flex;align-items:center;gap:4px">
+                Marks:
+                <input type="number" min="1" max="10" value="${marks}" class="qMarksInput" data-action="change-marks" data-type="${type}" data-index="${idx}" />
+              </label>
+              <button type="button" class="qDeleteBtn" data-action="delete-question" data-type="${type}" data-index="${idx}" title="Delete question">
+                🗑️ Delete
+              </button>
+            </div>
+          </div>
+
+          <input type="text" class="qTextInput" data-action="change-text" data-type="${type}" data-index="${idx}" placeholder="Enter question description..." value="${(q.text || "").replace(/"/g, '&quot;')}" />
+
+          ${isMcq ? `
+            <div class="qOptionsWrap">
+              ${options.map((opt, oIdx) => `
+                <div class="qOptionRow">
+                  <input type="radio" class="qOptionRadio" name="${type}_correct_${idx}" data-action="change-correct" data-type="${type}" data-index="${idx}" data-opt-index="${oIdx}" ${q.correct === oIdx ? "checked" : ""} title="Mark option ${letters[oIdx]} as correct answer" />
+                  <span class="qOptionLetter">${letters[oIdx]}.</span>
+                  <input type="text" class="qOptionInput" data-action="change-option" data-type="${type}" data-index="${idx}" data-opt-index="${oIdx}" placeholder="Option ${letters[oIdx]} text..." value="${(opt || "").replace(/"/g, '&quot;')}" />
+                </div>
+              `).join("")}
+            </div>
+          ` : `
+            <div class="qTfWrap">
+              <label class="qTfOption">
+                <input type="radio" name="${type}_tf_${idx}" data-action="change-tf" data-type="${type}" data-index="${idx}" value="true" ${q.correct === true ? "checked" : ""} />
+                <span style="color:var(--green)">✓ True (Correct Answer)</span>
+              </label>
+              <label class="qTfOption">
+                <input type="radio" name="${type}_tf_${idx}" data-action="change-tf" data-type="${type}" data-index="${idx}" value="false" ${q.correct === false ? "checked" : ""} />
+                <span style="color:var(--red)">✗ False (Correct Answer)</span>
+              </label>
+            </div>
+          `}
+        </div>
+      `;
+    }).join("");
+
+    // Wire events on question inputs
+    container.querySelectorAll("[data-action='change-type']").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const i = Number(sel.dataset.index);
+        const newType = e.target.value;
+        if (newType === "TF") {
+          builderQuestions[type][i] = {
+            type: "TF",
+            text: builderQuestions[type][i].text || "",
+            marks: builderQuestions[type][i].marks || 1,
+            correct: true
+          };
+        } else {
+          builderQuestions[type][i] = {
+            type: "MCQ",
+            text: builderQuestions[type][i].text || "",
+            marks: builderQuestions[type][i].marks || 1,
+            options: ["", "", "", ""],
+            correct: 0
+          };
+        }
+        renderQuestionList(type);
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='change-marks']").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const i = Number(inp.dataset.index);
+        builderQuestions[type][i].marks = Number(e.target.value) || 1;
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='change-text']").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const i = Number(inp.dataset.index);
+        builderQuestions[type][i].text = e.target.value;
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='change-option']").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const i = Number(inp.dataset.index);
+        const oIdx = Number(inp.dataset.optIndex);
+        if (!Array.isArray(builderQuestions[type][i].options)) builderQuestions[type][i].options = ["", "", "", ""];
+        builderQuestions[type][i].options[oIdx] = e.target.value;
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='change-correct']").forEach((r) => {
+      r.addEventListener("change", () => {
+        const i = Number(r.dataset.index);
+        const oIdx = Number(r.dataset.optIndex);
+        builderQuestions[type][i].correct = oIdx;
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='change-tf']").forEach((r) => {
+      r.addEventListener("change", () => {
+        const i = Number(r.dataset.index);
+        builderQuestions[type][i].correct = r.value === "true";
+        syncVisualToJson();
+      });
+    });
+
+    container.querySelectorAll("[data-action='delete-question']").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.dataset.index);
+        builderQuestions[type].splice(i, 1);
+        renderQuestionList(type);
+        syncVisualToJson();
+      });
+    });
+  }
+
+  function addQuestion(type) {
+    if (!builderQuestions[type]) builderQuestions[type] = [];
+    builderQuestions[type].push({
+      type: "MCQ",
+      text: "",
+      marks: 1,
+      options: ["", "", "", ""],
+      correct: 0
+    });
+    renderQuestionList(type);
+    syncVisualToJson();
+    setTimeout(() => {
+      const cards = byId(`${type}QuestionList`)?.querySelectorAll(".questionCard");
+      if (cards && cards.length) {
+        cards[cards.length - 1].querySelector(".qTextInput")?.focus();
+      }
+    }, 50);
+  }
+
+  function copyPreToPost() {
+    if (!builderQuestions.pre || !builderQuestions.pre.length) {
+      return showToast("Pre-Test has no questions to copy from", "warn");
+    }
+    builderQuestions.post = JSON.parse(JSON.stringify(builderQuestions.pre));
+    renderQuestionList("post");
+    syncVisualToJson();
+    showToast(`Copied ${builderQuestions.post.length} question(s) from Pre-Test to Post-Test!`, "success");
+  }
+
+  function switchBuilderTab(tab) {
+    activeBuilderTab = tab;
+    const visualContent = byId("builderVisualContent");
+    const jsonContent = byId("builderJsonContent");
+    const tabVisual = byId("tabBtnVisual");
+    const tabJson = byId("tabBtnJson");
+
+    if (tab === "visual") {
+      tabVisual?.classList.add("active");
+      tabJson?.classList.remove("active");
+      visualContent?.classList.remove("hidden");
+      jsonContent?.classList.add("hidden");
+      syncJsonToVisual();
+    } else {
+      tabJson?.classList.add("active");
+      tabVisual?.classList.remove("active");
+      jsonContent?.classList.remove("hidden");
+      visualContent?.classList.add("hidden");
+      syncVisualToJson();
+    }
+  }
+
   function clearTrainingForm() {
     if (!byId("tCategory")) return;
-    byId("tCategory").value = "Maternal Health";
+    fillAllCategorySelects("Maternal Health");
     byId("tStatus").value = "Draft";
     byId("tTitle").value = "";
     byId("tStart").value = "";
     byId("tEnd").value = "";
-    byId("tMode").value = "online";
+    byId("tMode").value = "hybrid";
     byId("tVenue").value = "";
     byId("tAttendanceEnabled").checked = true;
     byId("tGps").checked = false;
     byId("tOpen").value = "";
     byId("tClose").value = "";
-    byId("tPreJson").value = defaultPreJson();
-    byId("tPostJson").value = defaultPostJson();
+
+    // Reset Editing banner & indicators
+    byId("studioEditingBanner")?.classList.add("hidden");
+    const ind = byId("studioModeIndicator");
+    if (ind) {
+      ind.className = "studioModeBadge creating";
+      ind.innerHTML = "<span>➕ New Training</span>";
+    }
+    const saveTxt = byId("saveTrainingBtnText");
+    if (saveTxt) saveTxt.textContent = "Save & Publish Module";
     if (byId("saveTrainingBtn")) byId("saveTrainingBtn").dataset.editId = "";
+
+    // Reset Visual Builder Questions to defaults
+    try {
+      builderQuestions.pre = JSON.parse(defaultPreJson());
+      builderQuestions.post = JSON.parse(defaultPostJson());
+    } catch {
+      builderQuestions.pre = [];
+      builderQuestions.post = [];
+    }
+    renderVisualQuestions();
+    syncVisualToJson();
+    switchBuilderTab("visual");
   }
 
   function loadTrainingToForm(trainingId) {
@@ -2727,10 +3084,10 @@
     const t = LS.get(DBK.trainings, []).find((x) => x.id === trainingId);
     if (!t) return showToast("Training not found", "error");
 
-    byId("tCategory").value = t.category || "Maternal Health";
+    fillAllCategorySelects(t.category || "Maternal Health");
     byId("tStatus").value = t.status || "Draft";
     byId("tTitle").value = t.title || "";
-    byId("tMode").value = t.mode || "online";
+    byId("tMode").value = t.mode || "hybrid";
     byId("tVenue").value = t.venue || "";
 
     byId("tAttendanceEnabled").checked = !!t.attendanceEnabled;
@@ -2743,44 +3100,90 @@
 
     const pre = t.assessments?.pre;
     const post = t.assessments?.post;
-    byId("tPreJson").value = JSON.stringify(Array.isArray(pre) ? pre : JSON.parse(defaultPreJson()), null, 2);
-    byId("tPostJson").value = JSON.stringify(Array.isArray(post) ? post : JSON.parse(defaultPostJson()), null, 2);
+    initBuilderQuestions(pre, post);
 
-    byId("saveTrainingBtn").dataset.editId = t.id;
-    byId("tTitle")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    showToast("Training loaded into form for editing", "info");
+    // Update Editing Mode Banner & Indicator
+    const banner = byId("studioEditingBanner");
+    if (banner) banner.classList.remove("hidden");
+    const dispTitle = byId("editingTitleDisplay");
+    if (dispTitle) dispTitle.textContent = t.title || "Untitled Training";
+    const dispId = byId("editingIdDisplay");
+    if (dispId) dispId.textContent = t.id;
+
+    const ind = byId("studioModeIndicator");
+    if (ind) {
+      ind.className = "studioModeBadge editing";
+      ind.innerHTML = "<span>✏️ Editing Mode</span>";
+    }
+    const saveTxt = byId("saveTrainingBtnText");
+    if (saveTxt) saveTxt.textContent = "Update & Save Module";
+
+    if (byId("saveTrainingBtn")) byId("saveTrainingBtn").dataset.editId = t.id;
+
+    byId("trainingStudioCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    showToast(`Loaded "${t.title}" into Training Studio for editing`, "info");
   }
 
-  async function saveTrainingFromForm() {
+  async function saveTrainingFromForm(forcedStatus) {
     const u = currentUser();
     if (!u || u.role !== ROLES.ADMIN) return showToast("Admin access only", "warn");
 
-    const category = byId("tCategory").value;
-    const status = byId("tStatus").value;
-    const title = (byId("tTitle").value || "").trim();
-    const startAt = byId("tStart").value ? new Date(byId("tStart").value).toISOString() : null;
-    const endAt = byId("tEnd").value ? new Date(byId("tEnd").value).toISOString() : null;
-    const mode = byId("tMode").value;
-    const venue = (byId("tVenue").value || "").trim();
-    const attendanceEnabled = byId("tAttendanceEnabled").checked;
-    const gpsRequired = byId("tGps").checked;
-    const attendanceOpenAt = byId("tOpen").value ? new Date(byId("tOpen").value).toISOString() : null;
-    const attendanceCloseAt = byId("tClose").value ? new Date(byId("tClose").value).toISOString() : null;
+    const category = byId("tCategory")?.value || "Maternal Health";
+    const status = forcedStatus || byId("tStatus")?.value || "Draft";
+    const title = (byId("tTitle")?.value || "").trim();
+    const startAt = byId("tStart")?.value ? new Date(byId("tStart").value).toISOString() : null;
+    const endAt = byId("tEnd")?.value ? new Date(byId("tEnd").value).toISOString() : null;
+    const mode = byId("tMode")?.value || "hybrid";
+    const venue = (byId("tVenue")?.value || "").trim();
+    const attendanceEnabled = byId("tAttendanceEnabled")?.checked ?? true;
+    const gpsRequired = byId("tGps")?.checked ?? false;
+    const attendanceOpenAt = byId("tOpen")?.value ? new Date(byId("tOpen").value).toISOString() : null;
+    const attendanceCloseAt = byId("tClose")?.value ? new Date(byId("tClose").value).toISOString() : null;
 
-    if (!title) return showToast("Training Title is required", "warn");
-    if (!startAt || !endAt) return showToast("Start and End Date/Time are required", "warn");
+    if (!title) {
+      byId("tTitle")?.focus();
+      return showToast("Please enter a Training Module Title", "warn");
+    }
+    if (!startAt || !endAt) {
+      return showToast("Start and End Date/Time are required", "warn");
+    }
 
     let pre, post;
-    try {
-      pre = safeJsonParse(byId("tPreJson").value || "[]");
-      post = safeJsonParse(byId("tPostJson").value || "[]");
-    } catch (e) {
-      return showToast("Pre/Post JSON syntax error: " + e.message, "error");
+    if (activeBuilderTab === "visual") {
+      syncVisualToJson();
+      pre = builderQuestions.pre || [];
+      post = builderQuestions.post || [];
+    } else {
+      try {
+        pre = safeJsonParse(byId("tPreJson")?.value || "[]");
+        post = safeJsonParse(byId("tPostJson")?.value || "[]");
+      } catch (e) {
+        return showToast("JSON syntax error: " + e.message, "error");
+      }
+    }
+
+    // Question validation
+    if (!Array.isArray(pre) || pre.length === 0) {
+      return showToast("Please add at least 1 Pre-Test question", "warn");
+    }
+    if (!Array.isArray(post) || post.length === 0) {
+      return showToast("Please add at least 1 Post-Test question", "warn");
+    }
+
+    for (let i = 0; i < pre.length; i++) {
+      if (!pre[i].text || !pre[i].text.trim()) {
+        return showToast(`Pre-Test Question #${i + 1} is missing question text`, "warn");
+      }
+    }
+    for (let i = 0; i < post.length; i++) {
+      if (!post[i].text || !post[i].text.trim()) {
+        return showToast(`Post-Test Question #${i + 1} is missing question text`, "warn");
+      }
     }
 
     const trainings = LS.get(DBK.trainings, []);
     const editId = byId("saveTrainingBtn")?.dataset.editId || "";
-    const id = editId || uuid();
+    const id = editId || `T-${uuid().slice(0, 8).toUpperCase()}`;
 
     const existing = trainings.find((t) => t.id === editId);
 
@@ -2805,13 +3208,14 @@
     if (editId) {
       const idx = trainings.findIndex((t) => t.id === editId);
       if (idx >= 0) trainings[idx] = payload;
+      else trainings.unshift(payload);
     } else {
       trainings.unshift(payload);
     }
 
     LS.set(DBK.trainings, trainings);
 
-    // 1. PERSIST DIRECTLY TO CLOUD BACKEND (ACID DURABILITY)
+    // 1. PERSIST DIRECTLY TO AIVEN POSTGRESQL CLOUD BACKEND
     try {
       const apiRes = await fetch(apiUrl("/api/trainings"), {
         method: "POST",
@@ -2819,15 +3223,22 @@
         body: JSON.stringify(payload)
       });
       if (apiRes.ok) {
-        console.log(`[API] Training ${id} (${status}) saved to Cloud DB successfully.`);
+        console.log(`[API] Training ${id} (${status}) saved to Aiven Cloud DB successfully.`);
       } else {
         console.warn("[API] Failed to save training to Cloud DB:", await apiRes.text());
+        addToQueue({ action: "training", training: payload });
       }
     } catch (apiErr) {
       console.warn("[API] Network error saving training to Cloud DB:", apiErr);
+      addToQueue({ action: "training", training: payload });
     }
 
-    showToast(editId ? `Training updated successfully (${status})` : `New training created (${status})`, "success");
+    showToast(
+      editId
+        ? `Training "${title}" updated successfully (${status})!`
+        : `New training "${title}" created (${status})!`,
+      "success"
+    );
 
     await logEvent(editId ? "training_updated" : "training_created", {
       trainingId: id,
@@ -2837,6 +3248,83 @@
     });
 
     clearTrainingForm();
+    renderAll();
+  }
+
+  async function setTrainingStatus(trainingId, newStatus) {
+    const u = currentUser();
+    if (!u || u.role !== ROLES.ADMIN) return showToast("Admin access only", "warn");
+
+    const trainings = LS.get(DBK.trainings, []);
+    const t = trainings.find((x) => x.id === trainingId);
+    if (!t) return showToast("Training not found", "error");
+
+    t.status = newStatus;
+    t.updatedAt = nowIso();
+    LS.set(DBK.trainings, trainings);
+
+    // Fast Cloud write
+    try {
+      const res = await fetch(apiUrl(`/api/trainings/${encodeURIComponent(trainingId)}/status`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) {
+        await fetch(apiUrl("/api/trainings"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(t)
+        });
+      }
+    } catch (e) {
+      console.warn("Status update cloud sync notice:", e);
+    }
+
+    await logEvent("training_status_updated", {
+      trainingId: t.id,
+      trainingTitle: t.title,
+      trainingCategory: t.category,
+      status: newStatus
+    });
+
+    showToast(`Training "${t.title}" is now ${newStatus}!`, "success");
+    renderAll();
+  }
+
+  async function deleteTraining(trainingId) {
+    const u = currentUser();
+    if (!u || u.role !== ROLES.ADMIN) return showToast("Admin access only", "warn");
+
+    const trainings = LS.get(DBK.trainings, []);
+    const t = trainings.find((x) => x.id === trainingId);
+    if (!t) return showToast("Training not found", "error");
+
+    if (!confirm(`Are you sure you want to permanently delete the training module:\n"${t.title}"?`)) {
+      return;
+    }
+
+    const filtered = trainings.filter((x) => x.id !== trainingId);
+    LS.set(DBK.trainings, filtered);
+
+    try {
+      await fetch(apiUrl(`/api/trainings/${encodeURIComponent(trainingId)}`), {
+        method: "DELETE"
+      });
+    } catch (e) {
+      console.warn("Delete training cloud sync notice:", e);
+    }
+
+    await logEvent("training_deleted", {
+      trainingId: t.id,
+      trainingTitle: t.title,
+      trainingCategory: t.category
+    });
+
+    showToast(`Training "${t.title}" deleted successfully`, "info");
+    if (byId("saveTrainingBtn")?.dataset.editId === trainingId) {
+      clearTrainingForm();
+    }
     renderAll();
   }
 
@@ -2862,25 +3350,43 @@
       return;
     }
 
-    box.innerHTML = list.map((t) => `
-      <div class="item">
-        <div class="row between">
-          <div class="t">${t.title}</div>
-          <span class="badge ${t.status === "Completed" ? "good" : "warn"}">${t.status}</span>
+    box.innerHTML = list.map((t) => {
+      const isPub = (t.status || "").toLowerCase() === "published";
+      return `
+        <div class="item">
+          <div class="row between">
+            <div class="t" style="font-weight:700">${t.title}</div>
+            <span class="badge ${isPub || t.status === "Completed" ? "good" : "warn"}">${t.status}</span>
+          </div>
+          <div class="s" style="margin-top:6px">
+            Category: <b>${t.category}</b> &bull; Mode: <b>${t.mode || "hybrid"}</b><br/>
+            Schedule: ${fmt(t.startAt)} to ${fmt(t.endAt)}<br/>
+            Venue: ${t.venue || "—"}
+          </div>
+          <div class="actions" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn small" type="button" data-sum-edit="${t.id}">✏️ Edit</button>
+            ${isPub ? `
+              <button class="btn small ghost" type="button" data-sum-unpub="${t.id}">⏸️ Unpublish</button>
+            ` : `
+              <button class="btn small success" type="button" data-sum-pub="${t.id}">🚀 Publish</button>
+            `}
+            <button class="btn small danger ghost" type="button" data-sum-del="${t.id}">🗑️ Delete</button>
+          </div>
         </div>
-        <div class="s">
-          Category: <b>${t.category}</b> &bull; Mode: <b>${t.mode}</b><br/>
-          Schedule: ${fmt(t.startAt)} to ${fmt(t.endAt)}<br/>
-          Venue: ${t.venue || "—"}
-        </div>
-        <div class="actions">
-          <button class="btn small" type="button" data-edit-training="${t.id}">Edit Training</button>
-        </div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
 
-    box.querySelectorAll("[data-edit-training]").forEach((btn) => {
-      btn.addEventListener("click", () => loadTrainingToForm(btn.dataset.editTraining));
+    box.querySelectorAll("[data-sum-edit]").forEach((btn) => {
+      btn.addEventListener("click", () => loadTrainingToForm(btn.dataset.sumEdit));
+    });
+    box.querySelectorAll("[data-sum-pub]").forEach((btn) => {
+      btn.addEventListener("click", () => setTrainingStatus(btn.dataset.sumPub, "Published"));
+    });
+    box.querySelectorAll("[data-sum-unpub]").forEach((btn) => {
+      btn.addEventListener("click", () => setTrainingStatus(btn.dataset.sumUnpub, "Draft"));
+    });
+    box.querySelectorAll("[data-sum-del]").forEach((btn) => {
+      btn.addEventListener("click", () => deleteTraining(btn.dataset.sumDel));
     });
   }
 
@@ -3167,17 +3673,36 @@
           const tAtt = attempts.filter((a) => a.trainingId === t.id || a.trainingTitle === t.title);
           const tPre = tAtt.filter((a) => (a.type || a.test_type || "").toUpperCase() === "PRE");
           const tPost = tAtt.filter((a) => (a.type || a.test_type || "").toUpperCase() === "POST");
+          const isPub = (t.status || "").toLowerCase() === "published";
 
           return `
             <div class="item">
               <div class="row between">
-                <div class="t">${t.title}</div>
-                <span class="badge ${t.status === "Completed" ? "good" : "warn"}">${t.status}</span>
+                <div class="t" style="font-size:15px;font-weight:700">${t.title}</div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span class="badge ${isPub || t.status === "Completed" ? "good" : (t.status === "Draft" ? "warn" : "bad")}">${t.status}</span>
+                </div>
               </div>
               <div class="s" style="margin-top:6px">
-                Category: <b>${t.category}</b> &bull; Schedule: ${fmt(t.startAt)} to ${fmt(t.endAt)}<br/>
-                Total Attempts: <b>${tAtt.length}</b> (Pre: ${tPre.length}, Post: ${tPost.length})<br/>
-                Average Performance: Pre <b>${avgPct(tPre)}%</b> &bull; Post <b>${avgPct(tPost)}%</b>
+                Category: <b>${t.category}</b> &bull; Mode: <b>${t.mode || "hybrid"}</b> &bull; Schedule: ${fmt(t.startAt)} to ${fmt(t.endAt)}<br/>
+                Total Attempts: <b>${tAtt.length}</b> (Pre: ${tPre.length}, Post: ${tPost.length}) &bull; Avg Pre: <b>${avgPct(tPre)}%</b> &bull; Post: <b>${avgPct(tPost)}%</b>
+              </div>
+              <div class="trainingCardActions" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn small" type="button" data-edit-training="${t.id}" title="Edit this training in Training Studio">
+                  ✏️ Edit
+                </button>
+                ${isPub ? `
+                  <button class="btn small ghost" type="button" data-unpublish-training="${t.id}" title="Unpublish training (switch to Draft mode)">
+                    ⏸️ Unpublish
+                  </button>
+                ` : `
+                  <button class="btn small success" type="button" data-publish-training="${t.id}" title="Publish training immediately for workers">
+                    🚀 Publish
+                  </button>
+                `}
+                <button class="btn small danger ghost" type="button" data-delete-training="${t.id}" title="Permanently delete training">
+                  🗑️ Delete
+                </button>
               </div>
             </div>
           `;
@@ -3185,7 +3710,21 @@
 
       td.innerHTML = list.length
         ? list.join("")
-        : `<div class="item"><div class="t">No trainings found</div><div class="s">No trainings match this category.</div></div>`;
+        : `<div class="item"><div class="t">No trainings found</div><div class="s">No trainings match this category filter.</div></div>`;
+
+      // Wire catalog action buttons
+      td.querySelectorAll("[data-edit-training]").forEach((btn) => {
+        btn.addEventListener("click", () => loadTrainingToForm(btn.dataset.editTraining));
+      });
+      td.querySelectorAll("[data-publish-training]").forEach((btn) => {
+        btn.addEventListener("click", () => setTrainingStatus(btn.dataset.publishTraining, "Published"));
+      });
+      td.querySelectorAll("[data-unpublish-training]").forEach((btn) => {
+        btn.addEventListener("click", () => setTrainingStatus(btn.dataset.unpublishTraining, "Draft"));
+      });
+      td.querySelectorAll("[data-delete-training]").forEach((btn) => {
+        btn.addEventListener("click", () => deleteTraining(btn.dataset.deleteTraining));
+      });
     }
 
     renderAdminWorkerMonitoring_({
@@ -3433,11 +3972,13 @@
     seedInitialUsers();
     seedSampleTrainings();
     fillDistrictSelect();
+    fillAllCategorySelects();
     applyRoleVisibility();
     renderWhoami();
 
-    if (byId("tPreJson") && !byId("tPreJson").value.trim()) byId("tPreJson").value = defaultPreJson();
-    if (byId("tPostJson") && !byId("tPostJson").value.trim()) byId("tPostJson").value = defaultPostJson();
+    if (!builderQuestions.pre || !builderQuestions.pre.length) {
+      initBuilderQuestions();
+    }
 
     renderWorkerDashboard();
     renderWorkerTrainings();
@@ -3508,13 +4049,60 @@
     });
     byId("wCatFilter")?.addEventListener("change", renderAll);
 
-    // Admin training form
-    byId("saveTrainingBtn")?.addEventListener("click", saveTrainingFromForm);
+    // Admin training form & Visual Builder
+    byId("saveTrainingBtn")?.addEventListener("click", () => saveTrainingFromForm());
+    byId("saveDraftTrainingBtn")?.addEventListener("click", () => saveTrainingFromForm("Draft"));
     byId("clearTrainingBtn")?.addEventListener("click", () => {
       clearTrainingForm();
       showToast("Training form cleared", "info");
     });
+    byId("cancelEditTrainingBtn")?.addEventListener("click", () => {
+      clearTrainingForm();
+      showToast("Exited edit mode", "info");
+    });
     byId("cleanTestDataBtn")?.addEventListener("click", cleanTestData);
+
+    // Visual builder tabs
+    byId("tabBtnVisual")?.addEventListener("click", () => switchBuilderTab("visual"));
+    byId("tabBtnJson")?.addEventListener("click", () => switchBuilderTab("json"));
+
+    // Visual builder question addition & copy
+    byId("addPreQuestionBtn")?.addEventListener("click", () => addQuestion("pre"));
+    byId("addPostQuestionBtn")?.addEventListener("click", () => addQuestion("post"));
+    byId("copyPreToPostBtn")?.addEventListener("click", copyPreToPost);
+
+    // JSON textareas real-time sync to visual builder
+    byId("tPreJson")?.addEventListener("input", syncJsonToVisual);
+    byId("tPostJson")?.addEventListener("input", syncJsonToVisual);
+
+    // Category Manager
+    byId("toggleNewCatBtn")?.addEventListener("click", () => {
+      const box = byId("addCategoryInline");
+      if (box) {
+        box.classList.toggle("hidden");
+        if (!box.classList.contains("hidden")) {
+          byId("newCategoryInput")?.focus();
+        }
+      }
+    });
+    byId("cancelCategoryBtn")?.addEventListener("click", () => {
+      byId("addCategoryInline")?.classList.add("hidden");
+      if (byId("newCategoryInput")) byId("newCategoryInput").value = "";
+    });
+    byId("saveCategoryBtn")?.addEventListener("click", () => {
+      const inp = byId("newCategoryInput");
+      const cat = (inp?.value || "").trim();
+      if (!cat) return showToast("Please enter a category name", "warn");
+      saveCategory(cat);
+      if (inp) inp.value = "";
+      byId("addCategoryInline")?.classList.add("hidden");
+      showToast(`Category "${cat}" added successfully!`, "success");
+    });
+    byId("newCategoryInput")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        byId("saveCategoryBtn")?.click();
+      }
+    });
 
     byId("tCategory")?.addEventListener("change", renderAdminTrainingSummary);
     byId("tStatus")?.addEventListener("change", renderAdminTrainingSummary);

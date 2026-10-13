@@ -1225,6 +1225,60 @@ def manage_trainings():
     return jsonify({"status": "success", "count": len(trainings), "trainings": trainings}), 200
 
 
+@app.route("/api/trainings/<training_id>", methods=["DELETE"])
+def delete_training_endpoint(training_id):
+    """Deletes a training module from Aiven Cloud PostgreSQL and in-memory cache."""
+    clean_id = (training_id or "").strip()
+    if not clean_id:
+        return jsonify({"status": "error", "message": "Training ID required"}), 400
+
+    if clean_id in in_memory_db["trainings"]:
+        del in_memory_db["trainings"][clean_id]
+
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                tbl = resolve_table_name(cur, ["trainings", "training", "Trainings", "Training"], "trainings")
+                cur.execute(f"DELETE FROM {tbl} WHERE id = %s;", (clean_id,))
+            conn.commit()
+            logger.info("Deleted training %s from Aiven PostgreSQL.", clean_id)
+        except Exception as e:
+            logger.error("Failed to delete training %s from PostgreSQL: %s", clean_id, e)
+        finally:
+            conn.close()
+
+    return jsonify({"status": "success", "message": f"Training {clean_id} deleted successfully"}), 200
+
+
+@app.route("/api/trainings/<training_id>/status", methods=["POST", "PATCH"])
+def toggle_training_status_endpoint(training_id):
+    """Quickly toggles or sets training publication status (e.g. Published / Draft)."""
+    data = request.get_json() or {}
+    new_status = (data.get("status") or "").strip()
+    if not new_status:
+        return jsonify({"status": "error", "message": "New status is required"}), 400
+
+    clean_id = (training_id or "").strip()
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                tbl = resolve_table_name(cur, ["trainings", "training", "Trainings", "Training"], "trainings")
+                cur.execute(f"UPDATE {tbl} SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s;", (new_status, clean_id))
+            conn.commit()
+            logger.info("Updated training %s status to '%s' in Aiven PostgreSQL.", clean_id, new_status)
+        except Exception as e:
+            logger.error("Error updating status for %s: %s", clean_id, e)
+        finally:
+            conn.close()
+
+    if clean_id in in_memory_db["trainings"]:
+        in_memory_db["trainings"][clean_id]["status"] = new_status
+
+    return jsonify({"status": "success", "training_id": clean_id, "new_status": new_status}), 200
+
+
 def save_attendance_record(data: dict) -> dict:
     """Saves or updates an attendance record in Aiven PostgreSQL and in-memory store."""
     training_id = str(data.get("trainingId") or data.get("training_id") or "").strip()
