@@ -3053,9 +3053,9 @@
         <div>Worker Details</div>
         <div>Facility</div>
         <div>District</div>
-        <div>Training</div>
-        <div>Pre-Test</div>
-        <div>Post-Test</div>
+        <div>Active Training</div>
+        <div>Pre-Test Score</div>
+        <div>Post-Test Outcome</div>
       </div>
     `;
 
@@ -3063,9 +3063,8 @@
       box.innerHTML = `
         <div class="tableLike">
           ${head}
-          <div class="tRow">
-            <div class="mut">No workers match current filters.</div>
-            <div></div><div></div><div></div><div></div><div></div>
+          <div class="tRow" style="grid-column: 1 / -1; padding: 24px 18px; text-align: center; color: var(--text-subtle);">
+            No health workers match the current search or training filter.
           </div>
         </div>
       `;
@@ -3099,23 +3098,33 @@
         }
 
         const tName = t ? t.title : "—";
-        const preTxt = pre ? `${pre.score}/${pre.totalMarks} (${pre.percent}%)` : "—";
-        const postTxt = post ? `${post.score}/${post.totalMarks} (${post.percent}%)` : "—";
-        const prePill = pre ? (pre.percent >= 60 ? "pill good" : "pill bad") : "pill";
-        const postPill = post ? (post.percent >= 60 ? "pill good" : "pill bad") : "pill";
+        const preTxt = pre ? `${pre.score}/${pre.totalMarks} (${pre.percent}%)` : "— Not Attempted";
+        const postTxt = post ? `${post.score}/${post.totalMarks} (${post.percent}%)` : "— Not Attempted";
+        const prePill = pre ? (pre.percent >= 60 ? "badge good" : "badge warn") : "badge";
+        const postPill = post ? (post.percent >= 60 ? "badge good" : "badge bad") : "badge";
 
-        const fac = w.profile?.facilityName || "—";
-        const dist = w.profile?.districtId ? districtNameById(w.profile.districtId) : "—";
+        const fac = w.profile?.facilityName || "Primary Health Center";
+        const dist = w.profile?.districtId ? districtNameById(w.profile.districtId) : (w.profile?.district || "Ranchi");
+
+        const initials = (w.fullName || "HW")
+          .split(" ")
+          .map((n) => n[0])
+          .slice(0, 2)
+          .join("")
+          .toUpperCase() || "HW";
 
         return `
           <div class="tRow">
-            <div>
-              <div><b>${w.fullName || "—"}</b></div>
-              <div class="mut monoSmall">${w.workerUniqueId || ""} &bull; ${w.phone || ""}</div>
+            <div class="workerCell">
+              <div class="workerAvatar">${initials}</div>
+              <div class="workerMeta">
+                <div class="workerName">${w.fullName || "Unnamed Worker"}</div>
+                <div class="workerSub">${w.workerUniqueId || w.phone || "ID Pending"}</div>
+              </div>
             </div>
-            <div class="mut">${fac}</div>
-            <div class="mut">${dist}</div>
-            <div class="mut">${tName}</div>
+            <div style="font-weight:600;color:var(--text-muted)">${fac}</div>
+            <div><span class="badge" style="font-size:11px">${dist}</span></div>
+            <div style="font-weight:600;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${tName}">${tName}</div>
             <div><span class="${prePill}">${preTxt}</span></div>
             <div><span class="${postPill}">${postTxt}</span></div>
           </div>
@@ -3149,7 +3158,7 @@
       const prev = pick.value || "";
       const listSorted = trainings.slice().sort((a, b) => new Date(b.startAt || 0) - new Date(a.startAt || 0));
       pick.innerHTML =
-        `<option value="">All Trainings</option>` +
+        `<option value="">All Trainings (${listSorted.length})</option>` +
         listSorted.map((t) => `<option value="${t.id}">${t.title}</option>`).join("");
 
       if ([...pick.options].some((o) => o.value === prev)) pick.value = prev;
@@ -3169,56 +3178,62 @@
     if (dash) {
       dash.innerHTML = `
         <div class="kpi">
-          <div class="k">Registered Workers</div>
+          <div class="k"><span>Registered Workers</span><span style="font-size:16px">👥</span></div>
           <div class="v">${uniqWorkers}</div>
-          <div class="sub">Active with attempts: <b>${uniqWorkersWithAnyAttempt}</b></div>
+          <div class="sub">Active with attempts: <b>${uniqWorkersWithAnyAttempt}</b> &bull; Total Staff</div>
         </div>
 
         <div class="kpi">
-          <div class="k">Trainings Catalog</div>
+          <div class="k"><span>Trainings Catalog</span><span style="font-size:16px">📚</span></div>
           <div class="v">${uniqTrainings}</div>
           <div class="sub">Published: <b>${uniqTrainingsPublished}</b> &bull; Completed: <b>${uniqTrainingsCompleted}</b></div>
         </div>
 
         <div class="kpi">
-          <div class="k">Total Assessments</div>
+          <div class="k"><span>Total Assessments</span><span style="font-size:16px">📝</span></div>
           <div class="v">${attempts.length}</div>
           <div class="sub">Pre-Tests: <b>${pre.length}</b> &bull; Post-Tests: <b>${post.length}</b></div>
         </div>
 
         <div class="kpi">
-          <div class="k">Verified Attendance</div>
+          <div class="k"><span>Verified Attendance</span><span style="font-size:16px">🛡️</span></div>
           <div class="v">${attendance.length}</div>
-          <div class="sub">Present records in scope</div>
+          <div class="sub">Present records synchronized</div>
         </div>
       `;
     }
 
     const viz = byId("adminScoreViz");
     if (viz) {
+      const preAvg = avgPct(pre);
+      const postAvg = avgPct(post);
+      const gain = postAvg - preAvg;
+      const gainSign = gain >= 0 ? "+" : "";
+      const cov = coveragePct_(attempts);
+
       viz.innerHTML = `
         <div class="kpi">
-          <div class="k">Pre-Test Average</div>
-          <div class="v">${avgPct(pre)}%</div>
+          <div class="k"><span>Pre-Test Baseline</span><span style="font-size:15px">🎯</span></div>
+          <div class="v" style="color:var(--amber)">${preAvg}%</div>
           <div class="sub">Pass Rate: <b>${passRate(pre)}%</b> &bull; Median: <b>${medianPct(pre)}%</b></div>
         </div>
 
         <div class="kpi">
-          <div class="k">Post-Test Average</div>
-          <div class="v">${avgPct(post)}%</div>
-          <div class="sub">Pass Rate: <b>${passRate(post)}%</b> &bull; Median: <b>${medianPct(post)}%</b></div>
+          <div class="k"><span>Post-Test Outcome</span><span style="font-size:15px">🏆</span></div>
+          <div class="v" style="color:var(--green)">${postAvg}%</div>
+          <div class="sub">Pass Rate: <b>${passRate(post)}%</b> &bull; Gain: <b style="color:var(--green)">${gainSign}${gain}%</b></div>
         </div>
 
         <div class="kpi">
-          <div class="k">Pre→Post Coverage</div>
-          <div class="v">${coveragePct_(attempts)}%</div>
-          <div class="sub">Workers completing both assessments</div>
+          <div class="k"><span>Pre &rarr; Post Coverage</span><span style="font-size:15px">📈</span></div>
+          <div class="v" style="color:var(--primary)">${cov}%</div>
+          <div class="sub">Workers completing both tests</div>
         </div>
 
         <div class="kpi">
-          <div class="k">Selected Domain</div>
-          <div class="v" style="font-size:18px">${category || "All Categories"}</div>
-          <div class="sub">Dashboard metrics scoped to filter</div>
+          <div class="k"><span>Selected Domain</span><span style="font-size:15px">🏥</span></div>
+          <div class="v" style="font-size:20px;line-height:1.3;letter-spacing:-0.2px">${category || "All Health Domains"}</div>
+          <div class="sub">Active dashboard intelligence filter</div>
         </div>
       `;
     }
@@ -4109,11 +4124,40 @@
       console.warn("Backend Cloud DB primary sync error:", e);
     }
   }
-  const syncFromMySQLPrimary = syncFromCloudPrimary;
-  window.syncFromCloudPrimary = syncFromCloudPrimary;
-  window.syncFromMySQLPrimary = syncFromCloudPrimary;
+  function updateThemeToggleIcon(theme) {
+    const btn = byId("themeToggleBtn");
+    if (!btn) return;
+    if (theme === "dark") {
+      btn.classList.add("isDark");
+      btn.setAttribute("title", "Switch to Light Mode");
+    } else {
+      btn.classList.remove("isDark");
+      btn.setAttribute("title", "Switch to Dark Mode");
+    }
+  }
+
+  function initTheme() {
+    const saved = localStorage.getItem("jh_theme");
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const theme = saved || (prefersDark ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+    updateThemeToggleIcon(theme);
+
+    byId("themeToggleBtn")?.addEventListener("click", () => {
+      const current = document.documentElement.getAttribute("data-theme") || "light";
+      const next = current === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("jh_theme", next);
+      updateThemeToggleIcon(next);
+      showToast(`Theme switched to ${next === "dark" ? "Dark" : "Light"} mode.`, "info", 2000);
+    });
+  }
 
   async function init() {
+    try {
+      initTheme();
+    } catch (_) {}
+
     // 1. Always wire interactive events immediately so buttons never become unresponsive
     try {
       wireEvents();

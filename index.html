@@ -48,6 +48,22 @@
             </svg>
             Install App
           </button>
+          <button id="themeToggleBtn" class="themeToggleBtn" type="button" aria-label="Toggle Dark/Light Mode" title="Toggle Dark/Light Theme">
+            <svg class="sunIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg class="moonIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
         </div>
 
         <div id="whoami" class="whoami">Not logged in</div>
@@ -297,67 +313,108 @@
 
       <!-- ADMIN VIEW -->
       <section id="viewAdmin" class="view hidden">
-        <div class="grid2">
-          <div class="card">
-            <div class="cardTitle">Admin Monitoring Dashboard</div>
-
-            <div class="admFilters">
-              <div class="row2">
-                <div class="field" style="grid-column:1 / -1">
-                  <label>Filter by Category</label>
-                  <select id="admCategoryFilter">
-                    <option value="">All Categories</option>
-                    <option>Maternal Health</option>
-                    <option>Child Health</option>
-                    <option>Child Nutrition</option>
-                    <option>Immunization</option>
-                    <option>NCD</option>
-                    <option>TB</option>
-                    <option>Data Reporting</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-              </div>
-              <div class="muted">Category filter applies to trainings, attendance, and assessment metrics.</div>
+        <!-- ADMIN COMMAND HEADER -->
+        <div class="card adminHeroCard">
+          <div class="adminHeaderTop">
+            <div>
+              <div class="adminBadgeTag">STATE COMMAND &bull; HEALTH INTELLIGENCE</div>
+              <h2 class="adminMainTitle">Executive Performance & Monitoring Cockpit</h2>
+              <div class="muted">Real-time health worker competency tracking, verified attendance analytics, and training studio</div>
             </div>
-
-            <div class="sep"></div>
-            <div id="adminDashboard" class="kpiGrid"></div>
-
-            <div class="sep"></div>
-            <div class="cardTitle">Performance Analytics (Avg % + Pass Rate)</div>
-            <div id="adminScoreViz" class="kpiGrid"></div>
-
-            <div class="sep"></div>
-            <div class="cardTitle">Trainings Catalog & Performance</div>
-            <div id="adminTrainingDetail" class="list"></div>
-
-            <div class="sep"></div>
-            <div class="row2">
-              <div class="field">
-                <label>Worker Monitoring — Training Filter</label>
-                <select id="admTrainingPick"></select>
-                <div class="hint">Select a training to view workers who attempted PRE/POST for that specific training.
-                </div>
-              </div>
-              <div class="field">
-                <label>Search Worker (Name / Phone / ID)</label>
-                <input id="admWorkerSearch" placeholder="Type name, phone or ID to filter…" />
-                <div class="hint">Live filtering across registered workers.</div>
+            <div class="adminTopControls">
+              <div class="field" style="margin:0;min-width:240px">
+                <label for="admCategoryFilter" style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Clinical Domain Filter</label>
+                <select id="admCategoryFilter" class="adminDomainSelect">
+                  <option value="">All Health Categories</option>
+                  <option>Maternal Health</option>
+                  <option>Child Health</option>
+                  <option>Child Nutrition</option>
+                  <option>Immunization</option>
+                  <option>NCD</option>
+                  <option>TB</option>
+                  <option>Data Reporting</option>
+                  <option>Other</option>
+                </select>
               </div>
             </div>
-
-            <div class="cardTitle" style="margin-top:14px">Registered Workers Monitoring (Details + PRE/POST)</div>
-            <div id="adminWorkerPerf" class="tableLike"></div>
           </div>
 
+          <!-- EXECUTIVE KPI METRICS GRID -->
+          <div class="sep" style="margin:16px 0"></div>
+          <div id="adminDashboard" class="kpiGrid"></div>
+
+          <!-- PERFORMANCE & PASS-RATE GAUGES -->
+          <div class="sep" style="margin:18px 0 14px"></div>
+          <div class="adminSubSectionTitle">
+            <span class="cardTitle" style="margin:0;font-size:15px">Assessment Outcomes & Competency Gains</span>
+            <span class="muted" style="font-size:12px;font-weight:500">Pre-Test vs Post-Test Delta & Coverage</span>
+          </div>
+          <div id="adminScoreViz" class="kpiGrid" style="margin-top:12px"></div>
+        </div>
+
+        <!-- FULL-WIDTH WORKER MONITORING TABLE CARD -->
+        <div class="card" style="margin-top:20px;">
+          <div class="cardTitle" style="margin-bottom:12px">
+            <div>
+              <span style="font-size:18px">Registered Frontline Workers Monitoring</span>
+              <div class="muted" style="font-size:12.5px;font-weight:400;margin-top:2px">Live attendance records, Pre-Test & Post-Test results across Jharkhand districts</div>
+            </div>
+            <div class="exportBtnGroup">
+              <button class="btn ghost small" data-export="workers" type="button" title="Export Workers CSV">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Workers CSV
+              </button>
+              <button class="btn ghost small" data-export="scores" type="button" title="Export Scores CSV">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Scores CSV
+              </button>
+              <button class="btn small" data-export="master" type="button" title="Export Full Master CSV">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Master CSV
+              </button>
+            </div>
+          </div>
+
+          <div class="tableToolbar">
+            <div class="tableSearchWrap">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="searchIcon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input id="admWorkerSearch" placeholder="Filter by worker name, 10-digit mobile, or worker ID (e.g., JH201884)..." />
+            </div>
+            <div class="tableFilterSelectWrap">
+              <label for="admTrainingPick">Filter by Training:</label>
+              <select id="admTrainingPick"></select>
+            </div>
+          </div>
+
+          <div id="adminWorkerPerf" class="tableLike" style="margin-top:14px"></div>
+        </div>
+
+        <!-- TWO COLUMN SECTION: TRAINING CATALOG & TRAINING STUDIO -->
+        <div class="grid2" style="margin-top:20px;">
+          <!-- LEFT: TRAININGS CATALOG & PERFORMANCE -->
           <div class="card">
-            <div class="cardTitle">Create / Edit Training</div>
+            <div class="cardTitle">
+              <span>Trainings Catalog & Performance</span>
+              <button class="btn ghost small" data-export="trainings" type="button">Export Trainings CSV</button>
+            </div>
+            <div id="adminTrainingDetail" class="list"></div>
+
+            <div class="sep" style="margin:20px 0"></div>
+            <div class="cardTitle">Domain Quick Edit & Status Overview</div>
+            <div id="adminTrainingSummary" class="list"></div>
+          </div>
+
+          <!-- RIGHT: TRAINING MANAGEMENT STUDIO -->
+          <div class="card">
+            <div class="cardTitle">
+              <span>Training Studio & Assessment Builder</span>
+              <span class="badge good" style="font-size:11px">Aiven DB Live</span>
+            </div>
 
             <div class="form">
               <div class="row2">
                 <div class="field">
-                  <label>Category</label>
+                  <label>Clinical Category</label>
                   <select id="tCategory">
                     <option>Maternal Health</option>
                     <option>Child Health</option>
@@ -370,7 +427,7 @@
                   </select>
                 </div>
                 <div class="field">
-                  <label>Status</label>
+                  <label>Publication Status</label>
                   <select id="tStatus">
                     <option>Draft</option>
                     <option>Published</option>
@@ -381,92 +438,86 @@
               </div>
 
               <div class="field">
-                <label>Training Title</label>
+                <label>Training Module Title</label>
                 <input id="tTitle" placeholder="e.g., Maternal & Child Health Protocol Refresher" />
               </div>
 
               <div class="row2">
                 <div class="field">
-                  <label>Start Date/Time</label>
+                  <label>Start Date & Time</label>
                   <input id="tStart" type="datetime-local" />
                 </div>
                 <div class="field">
-                  <label>End Date/Time</label>
+                  <label>End Date & Time</label>
                   <input id="tEnd" type="datetime-local" />
                 </div>
               </div>
 
               <div class="row2">
                 <div class="field">
-                  <label>Mode</label>
+                  <label>Training Delivery Mode</label>
                   <select id="tMode">
+                    <option>hybrid</option>
                     <option>online</option>
                     <option>physical</option>
-                    <option>hybrid</option>
                   </select>
                 </div>
                 <div class="field">
-                  <label>Venue / Link</label>
-                  <input id="tVenue" placeholder="Venue or online conference link" />
+                  <label>Venue / Conference Link</label>
+                  <input id="tVenue" placeholder="District Training Center / Video Conference URL" />
                 </div>
               </div>
 
-              <div class="row2">
+              <div class="toggleGroupCard">
                 <label class="check">
                   <input id="tAttendanceEnabled" type="checkbox" checked />
-                  <span>Attendance enabled</span>
+                  <span><b>Attendance Enforced</b> (Required before Pre/Post Tests can unlock)</span>
                 </label>
 
-                <label class="check">
+                <label class="check" style="margin-top:8px">
                   <input id="tGps" type="checkbox" />
-                  <span>GPS required</span>
+                  <span><b>GPS Geofencing Required</b> for attendance verification</span>
                 </label>
               </div>
 
-              <div class="row2">
+              <div class="row2" style="margin-top:4px">
                 <div class="field">
-                  <label>Attendance Open At (optional)</label>
+                  <label>Attendance Open At (Optional)</label>
                   <input id="tOpen" type="datetime-local" />
                 </div>
                 <div class="field">
-                  <label>Attendance Close At (optional)</label>
+                  <label>Attendance Close At (Optional)</label>
                   <input id="tClose" type="datetime-local" />
                 </div>
               </div>
 
               <div class="field">
-                <label>Pre-Test JSON (Questions array)</label>
-                <textarea id="tPreJson" rows="6"></textarea>
-                <div class="hint">Admin editable array of MCQ / True-False questions.</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                  <label style="margin:0">Pre-Test Assessment Questions (JSON Schema)</label>
+                  <span class="muted" style="font-size:11.5px">MCQ / True-False</span>
+                </div>
+                <textarea id="tPreJson" rows="5" class="codeTextarea" spellcheck="false"></textarea>
               </div>
 
               <div class="field">
-                <label>Post-Test JSON (Questions array)</label>
-                <textarea id="tPostJson" rows="6"></textarea>
-                <div class="hint">Admin editable array of MCQ / True-False questions.</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                  <label style="margin:0">Post-Test Assessment Questions (JSON Schema)</label>
+                  <span class="muted" style="font-size:11.5px">Passing Standard &ge; 60%</span>
+                </div>
+                <textarea id="tPostJson" rows="5" class="codeTextarea" spellcheck="false"></textarea>
               </div>
 
-              <div class="row gap">
-                <button id="saveTrainingBtn" class="btn" type="button">Save Training</button>
-                <button id="clearTrainingBtn" class="btn ghost" type="button">Clear</button>
+              <div class="row gap" style="margin-top:6px">
+                <button id="saveTrainingBtn" class="btn" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                  Save Training Module
+                </button>
+                <button id="clearTrainingBtn" class="btn ghost" type="button">Clear Form</button>
               </div>
             </div>
 
-            <div class="sep"></div>
-            <div class="cardTitle">Category Training Summary</div>
-            <div id="adminTrainingSummary" class="list"></div>
-
-            <div class="sep"></div>
-            <div class="cardTitle">Data Export (CSV)</div>
-            <div class="row gap wrap">
-              <button class="btn ghost small" data-export="workers" type="button">Export Workers CSV</button>
-              <button class="btn ghost small" data-export="trainings" type="button">Export Trainings CSV</button>
-              <button class="btn ghost small" data-export="scores" type="button">Export Scores CSV</button>
-              <button class="btn small" data-export="master" type="button">Export Master CSV</button>
-            </div>
-
-            <div class="sep"></div>
-            <div class="cardTitle">CSV Preview</div>
+            <div class="sep" style="margin:20px 0 14px"></div>
+            <div class="cardTitle" style="font-size:14px;margin-bottom:8px">CSV Data Preview</div>
             <pre id="csvPreview" class="pre"></pre>
           </div>
         </div>
