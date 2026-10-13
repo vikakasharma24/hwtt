@@ -30,6 +30,7 @@ def sync_items(items):
     users_synced = 0
     att_synced = 0
     atmps_synced = 0
+    trainings_synced = 0
 
     print(f"Syncing {len(items)} action(s) directly to Aiven Cloud PostgreSQL...")
 
@@ -122,11 +123,60 @@ def sync_items(items):
             atmps_synced += 1
             print(f"  [Attempt] Synced: {p.get('type', 'POST')} for {p.get('fullName')}")
 
+        # 4. Training Created or Updated
+        elif "train" in act or (p.get("category") and p.get("title") and p.get("startAt")):
+            tid = p.get("id") or p.get("trainingId")
+            assessments = p.get("assessments")
+            if isinstance(assessments, dict):
+                assess_str = json.dumps(assessments)
+            elif isinstance(assessments, str):
+                assess_str = assessments
+            else:
+                assess_str = None
+
+            cur.execute("""
+                INSERT INTO trainings (
+                    id, category, status, title, mode, venue,
+                    start_at, end_at, attendance_enabled, gps_required,
+                    attendance_open_at, attendance_close_at, assessments_json, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    category = EXCLUDED.category,
+                    status = EXCLUDED.status,
+                    title = EXCLUDED.title,
+                    mode = EXCLUDED.mode,
+                    venue = EXCLUDED.venue,
+                    start_at = EXCLUDED.start_at,
+                    end_at = EXCLUDED.end_at,
+                    attendance_enabled = EXCLUDED.attendance_enabled,
+                    gps_required = EXCLUDED.gps_required,
+                    attendance_open_at = EXCLUDED.attendance_open_at,
+                    attendance_close_at = EXCLUDED.attendance_close_at,
+                    assessments_json = COALESCE(EXCLUDED.assessments_json, trainings.assessments_json),
+                    updated_at = CURRENT_TIMESTAMP;
+            """, (
+                tid,
+                p.get("category") or "General",
+                p.get("status") or "Published",
+                p.get("title") or p.get("trainingTitle"),
+                p.get("mode") or "hybrid",
+                p.get("venue") or "",
+                p.get("startAt") or p.get("start_at"),
+                p.get("endAt") or p.get("end_at"),
+                1 if p.get("attendanceEnabled") else 0,
+                1 if p.get("gpsRequired") else 0,
+                p.get("attendanceOpenAt") or p.get("attendance_open_at"),
+                p.get("attendanceCloseAt") or p.get("attendance_close_at"),
+                assess_str
+            ))
+            trainings_synced += 1
+            print(f"  [Training] Synced: {p.get('title') or tid} ({p.get('status')})")
+
     conn.commit()
     cur.close()
     conn.close()
 
-    print(f"\n[DONE] Successfully synced to Aiven DB: Users={users_synced}, Attendance={att_synced}, Attempts={atmps_synced}")
+    print(f"\n[DONE] Successfully synced to Aiven DB: Users={users_synced}, Attendance={att_synced}, Attempts={atmps_synced}, Trainings={trainings_synced}")
     print("\nRefreshing aiven_db_master.json...")
     export_aiven()
 

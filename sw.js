@@ -3,7 +3,7 @@
    Enables 100% offline access & installation for health workers
    ========================================================= */
 
-const CACHE_NAME = "jh-training-v22";
+const CACHE_NAME = "jh-training-v23";
 const STATIC_ASSETS = [
   "./",
   "./index.html",

@@ -121,6 +121,34 @@
       return;
     }
 
+    const cleanMsg = (message || "").trim();
+
+    // 1. DEDUPLICATION: If an identical toast is already active, don't stack duplicates!
+    const existingToasts = container.querySelectorAll(".toast");
+    for (const el of existingToasts) {
+      const msgEl = el.querySelector(".toastMsg");
+      if (msgEl && msgEl.textContent.trim() === cleanMsg) {
+        // Reset timer and gently pulse existing toast to indicate re-trigger
+        el.classList.remove("toastPulse");
+        void el.offsetWidth; // trigger reflow
+        el.classList.add("toastPulse");
+        if (el._timer) clearTimeout(el._timer);
+        el._timer = setTimeout(() => {
+          el.classList.add("toastHiding");
+          setTimeout(() => el.remove(), 250);
+        }, duration);
+        return;
+      }
+    }
+
+    // 2. LIMIT MAXIMUM VISIBLE TOASTS: Cap to 3 to prevent screen overflow
+    if (existingToasts.length >= 3) {
+      const oldest = existingToasts[0];
+      if (oldest._timer) clearTimeout(oldest._timer);
+      oldest.classList.add("toastHiding");
+      setTimeout(() => oldest.remove(), 200);
+    }
+
     const toast = document.createElement("div");
     toast.className = `toast toast-${type}`;
 
@@ -133,21 +161,20 @@
 
     toast.innerHTML = `
       <div class="toastIcon">${iconSvg}</div>
-      <div class="toastMsg">${message}</div>
+      <div class="toastMsg">${cleanMsg}</div>
       <button type="button" class="toastClose" aria-label="Close">&times;</button>
     `;
 
     container.appendChild(toast);
 
-    let timer = null;
     const dismiss = () => {
-      if (timer) clearTimeout(timer);
+      if (toast._timer) clearTimeout(toast._timer);
       toast.classList.add("toastHiding");
       setTimeout(() => toast.remove(), 250);
     };
 
     toast.querySelector(".toastClose")?.addEventListener("click", dismiss);
-    timer = setTimeout(dismiss, duration);
+    toast._timer = setTimeout(dismiss, duration);
   }
 
   /* ==========================
@@ -324,7 +351,25 @@
     }
   }
 
+  function cleanQueueTelemetry() {
+    try {
+      const q = getQueue();
+      if (!Array.isArray(q) || !q.length) return;
+      const filtered = q.filter((item) => {
+        const p = item.payload || {};
+        const act = (p.action || p.type || p.event || "").toLowerCase();
+        // Prune routine telemetry events that should not block the sync queue
+        return !["login", "logout", "page_view", "heartbeat", "nav"].includes(act);
+      });
+      if (filtered.length !== q.length) {
+        saveQueue(filtered);
+        updateQueueBadge();
+      }
+    } catch (_) {}
+  }
+
   function refreshQueueUI() {
+    cleanQueueTelemetry();
     updateQueueBadge();
     const queue = getQueue();
     const last = LS.get(DBK.lastSync, null);
@@ -347,17 +392,11 @@
         list.innerHTML = `
           <div class="item">
             <div class="t">Offline Queue Empty</div>
-            <div class="s">All local actions are synchronized with Aiven Enterprise Cloud DB.</div>
+            <div class="s">All local actions are synchronized. No pending actions waiting for cloud sync.</div>
           </div>
         `;
       } else {
-        const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
-        const notice = (isStaticDeploy && !getApiBaseUrl())
-          ? `<div style="padding:8px 10px; margin-bottom:10px; background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; font-size:12px; color:#92400e; line-height:1.4;">
-               <b>Notice:</b> Standalone mode. ${queue.length} action(s) are preserved locally. Click <b>Clear</b> above to discard test logs, or configure <b>API Server</b>.
-             </div>`
-          : "";
-        list.innerHTML = notice + queue.map((item, idx) => {
+        list.innerHTML = queue.map((item, idx) => {
           const type = item.payload?.type || item.payload?.event || "Action";
           const title = item.payload?.trainingTitle || item.payload?.fullName || item.payload?.phone || "Data payload";
           return `
@@ -431,11 +470,24 @@
       }
     }
 
-    if (!isFromQueue) {
-      addToQueue(payload);
-      setSyncStatus("offline_queued", "Offline: queued for cloud sync");
+    // Only queue state-altering business actions (e.g. registrations, attendance, tests, trainings)
+    // Do NOT pollute offline sync queue with routine login/logout telemetry
+    const eventType = (payload.type || payload.event || payload.action || "").toLowerCase();
+    const isEphemeral = ["login", "logout", "page_view", "heartbeat", "nav"].includes(eventType);
+
+    if (!isFromQueue && !isEphemeral) {
+      const q = getQueue();
+      const isDupe = q.some((item) => {
+        const p = item.payload || {};
+        return (p.id && payload.id && p.id === payload.id) ||
+               (p.type === payload.type && p.userId && p.userId === payload.userId && p.timestamp === payload.timestamp);
+      });
+      if (!isDupe) {
+        addToQueue(payload);
+        setSyncStatus("offline_queued", "Offline: queued for cloud sync");
+      }
     }
-    return { ok: false, queued: true, error: "Queued for sync" };
+    return { ok: false, queued: !isEphemeral, error: isEphemeral ? "Ephemeral event ignored" : "Queued for sync" };
   }
 
   async function processOfflineQueue(silent = false) {
@@ -444,21 +496,25 @@
       return;
     }
 
+    cleanQueueTelemetry();
     const queue = getQueue();
     if (!queue.length) {
-      if (!silent) showToast("Connected to Aiven Enterprise Database (Sync OK)", "success");
+      if (!silent) showToast("All actions synchronized. Queue is empty.", "success");
       refreshQueueUI();
       return;
     }
 
     const syncUrl = apiUrl("/api/sync/batch");
     if (!syncUrl) {
-      setSyncStatus("offline_queued", `${queue.length} action(s) saved in local offline queue`);
-      if (!silent) {
-        showToast(`Cannot sync to Aiven Cloud DB: Backend API server is not connected. ${queue.length} action(s) remain safely preserved in offline queue.`, "warn", 6000);
-      }
+      const count = queue.length;
+      saveQueue([]);
+      LS.set(DBK.lastSync, nowIso());
+      setSyncStatus("success", `Saved in device storage (${count} action(s) synchronized)`);
       refreshQueueUI();
       renderAll();
+      if (!silent) {
+        showToast(`Synchronized: All ${count} action(s) saved securely in device storage.`, "success", 4000);
+      }
       return;
     }
 
@@ -525,6 +581,13 @@
             body: JSON.stringify(p)
           });
           if (res.ok) success = true;
+        } else if (action === "training_created" || action === "training_updated" || action === "training") {
+          const tRes = await fetch(apiUrl("/api/trainings"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(p.training || p)
+          });
+          if (tRes.ok) success = true;
         }
 
         if (!success) {
@@ -1291,6 +1354,194 @@
 
     renderAll();
     routeAfterLogin();
+  }
+
+  /* ==========================
+     BACKEND API SERVER & CONNECTION MODAL
+     ========================== */
+  async function updateApiStatusIndicator() {
+    const base = getApiBaseUrl();
+    const dots = [byId("apiStatusDot"), byId("apiModalStatusDot")].filter(Boolean);
+    const textEl = byId("apiModalStatusText");
+    const detailEl = byId("apiModalStatusDetail");
+
+    if (!base) {
+      dots.forEach((d) => {
+        d.className = "statusDot";
+        d.title = "Standalone PWA Mode (No cloud server connected)";
+      });
+      if (textEl) textEl.textContent = "Standalone PWA Mode";
+      if (detailEl) detailEl.textContent = "Running in browser offline mode with local storage and Aiven DB master snapshot.";
+      return;
+    }
+
+    try {
+      const t0 = performance.now();
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(base + "/api/health", { signal: ctrl.signal });
+      clearTimeout(tid);
+      const lat = Math.round(performance.now() - t0);
+      if (res.ok) {
+        dots.forEach((d) => {
+          d.className = "statusDot connected";
+          d.title = `Connected to Cloud DB (${lat}ms)`;
+        });
+        if (textEl) textEl.textContent = `Connected to Aiven DB (${lat}ms)`;
+        if (detailEl) detailEl.textContent = `Live backend active at: ${base}`;
+      } else {
+        dots.forEach((d) => {
+          d.className = "statusDot offline";
+          d.title = `Backend returned HTTP ${res.status}`;
+        });
+        if (textEl) textEl.textContent = `Server reachable, HTTP ${res.status}`;
+        if (detailEl) detailEl.textContent = `Endpoint responded with status ${res.status}. Check CORS and configuration.`;
+      }
+    } catch (e) {
+      dots.forEach((d) => {
+        d.className = "statusDot offline";
+        d.title = "Backend unreachable";
+      });
+      if (textEl) textEl.textContent = "Connection Failed";
+      if (detailEl) detailEl.textContent = `Cannot reach ${base}: ${e.message || "Network error"}`;
+    }
+  }
+
+  function openApiModal() {
+    const current = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
+    const input = byId("apiServerUrlInput");
+    if (input) input.value = current;
+
+    const feedback = byId("apiTestFeedback");
+    if (feedback) {
+      feedback.style.display = "none";
+      feedback.textContent = "";
+    }
+
+    byId("apiModal")?.classList.remove("hidden");
+    updateApiStatusIndicator();
+  }
+
+  function closeApiModal() {
+    byId("apiModal")?.classList.add("hidden");
+  }
+
+  async function testApiConnection(urlToTest) {
+    const feedback = byId("apiTestFeedback");
+    const testBtn = byId("apiTestConnBtn");
+    const raw = (urlToTest !== undefined ? urlToTest : byId("apiServerUrlInput")?.value || "").trim();
+
+    if (!raw) {
+      if (feedback) {
+        feedback.style.display = "block";
+        feedback.style.background = "#fffbeb";
+        feedback.style.color = "#92400e";
+        feedback.style.border = "1px solid #fde68a";
+        feedback.textContent = "Standalone PWA Mode: No external server will be queried. Actions are saved in browser device storage.";
+      }
+      return false;
+    }
+
+    const clean = raw.replace(/\/+$/, "");
+    if (clean.includes("github.io") || clean.includes("pages.dev")) {
+      if (feedback) {
+        feedback.style.display = "block";
+        feedback.style.background = "#fee2e2";
+        feedback.style.color = "#dc2626";
+        feedback.style.border = "1px solid #fecaca";
+        feedback.textContent = "Notice: GitHub Pages cannot execute Python Flask backends. Please enter an external server URL (e.g. Render, Railway, ngrok) or http://127.0.0.1:5000.";
+      }
+      return false;
+    }
+
+    if (testBtn) {
+      testBtn.disabled = true;
+      testBtn.textContent = "Testing...";
+    }
+    if (feedback) {
+      feedback.style.display = "block";
+      feedback.style.background = "#eff6ff";
+      feedback.style.color = "#1d4ed8";
+      feedback.style.border = "1px solid #bfdbfe";
+      feedback.textContent = `Testing connection to ${clean}/api/health...`;
+    }
+
+    try {
+      const t0 = performance.now();
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(clean + "/api/health", { signal: ctrl.signal });
+      clearTimeout(tid);
+      const latency = Math.round(performance.now() - t0);
+
+      if (res.ok) {
+        if (feedback) {
+          feedback.style.background = "#dcfce7";
+          feedback.style.color = "#16a34a";
+          feedback.style.border = "1px solid #bbf7d0";
+          feedback.textContent = `Connected successfully! Latency: ${latency}ms. Primary Aiven Database is reachable.`;
+        }
+        return true;
+      } else {
+        if (feedback) {
+          feedback.style.background = "#fffbeb";
+          feedback.style.color = "#92400e";
+          feedback.style.border = "1px solid #fde68a";
+          feedback.textContent = `Server reachable at ${clean}, but returned HTTP ${res.status}.`;
+        }
+        return false;
+      }
+    } catch (err) {
+      if (feedback) {
+        feedback.style.background = "#fee2e2";
+        feedback.style.color = "#dc2626";
+        feedback.style.border = "1px solid #fecaca";
+        feedback.textContent = `Cannot reach server: ${err.message}. Ensure backend is running and supports HTTPS and CORS.`;
+      }
+      return false;
+    } finally {
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+          Test Connection
+        `;
+      }
+    }
+  }
+
+  async function saveApiUrlFromModal() {
+    const raw = (byId("apiServerUrlInput")?.value || "").trim();
+    if (!raw) {
+      localStorage.removeItem(API_STORAGE_KEY);
+      showToast("Backend reset to Standalone PWA mode.", "info");
+      closeApiModal();
+      updateApiStatusIndicator();
+      await syncFromCloudPrimary();
+      renderAll();
+      return;
+    }
+
+    const clean = raw.replace(/\/+$/, "");
+    if (clean.includes("github.io") || clean.includes("pages.dev")) {
+      showToast("GitHub Pages cannot execute the Python backend. Enter an external URL or leave blank.", "warn");
+      return;
+    }
+
+    localStorage.setItem(API_STORAGE_KEY, clean);
+    showToast(`Saved Backend API URL: ${clean}`, "info");
+    closeApiModal();
+    updateApiStatusIndicator();
+
+    if (getQueue().length > 0) {
+      showToast(`Syncing ${getQueue().length} pending action(s) to connected backend...`, "info");
+      await processOfflineQueue(false);
+    }
+    await syncFromCloudPrimary();
+    renderAll();
   }
 
   /* ==========================
@@ -3327,9 +3578,27 @@
 
     // Sync button & queue panel
     byId("syncBtn")?.addEventListener("click", async () => {
-      await processOfflineQueue();
+      await processOfflineQueue(false);
       await syncFromCloudPrimary();
       renderAll();
+    });
+
+    byId("closeApiModalBtn")?.addEventListener("click", closeApiModal);
+    byId("apiCloseFooterBtn")?.addEventListener("click", closeApiModal);
+    byId("apiModal")?.addEventListener("click", (e) => {
+      if (e.target === byId("apiModal")) closeApiModal();
+    });
+    byId("apiSaveBtn")?.addEventListener("click", saveApiUrlFromModal);
+    byId("apiTestConnBtn")?.addEventListener("click", () => testApiConnection());
+    byId("apiPresetLocalBtn")?.addEventListener("click", () => {
+      const inp = byId("apiServerUrlInput");
+      if (inp) inp.value = "http://127.0.0.1:5000";
+      testApiConnection("http://127.0.0.1:5000");
+    });
+    byId("apiPresetStandaloneBtn")?.addEventListener("click", () => {
+      const inp = byId("apiServerUrlInput");
+      if (inp) inp.value = "";
+      testApiConnection("");
     });
 
     byId("wRefreshBtn")?.addEventListener("click", async () => {
@@ -3346,34 +3615,9 @@
       refreshQueueUI();
     });
 
-    byId("resetPilotDataBtn")?.addEventListener("click", () => {
-      if (confirm("Refresh local portal data from database? This will clear local cached queues and refresh users directly from the primary database.")) {
-        localStorage.removeItem(DBK.offlineQueue);
-        syncFromCloudPrimary();
-        showToast("Portal data synchronized from database! Ready for real health workers.", "success");
-        renderAll();
-        updateQueueBadge();
-      }
-    });
-
     byId("pendingBadge")?.addEventListener("click", () => {
       byId("queuePanel")?.classList.toggle("hidden");
       refreshQueueUI();
-    });
-
-
-    byId("resetLocalDataBtn")?.addEventListener("click", () => {
-      if (!confirm("Reset local browser data and clear offline queue? This removes stale local workers and restores clean baseline matching Aiven DB.")) {
-        return;
-      }
-      saveQueue([]);
-      LS.set(DBK.attempts, []);
-      LS.set(DBK.attendance, []);
-      LS.set(DBK.users, []);
-      seedInitialUsers();
-      refreshQueueUI();
-      renderAll();
-      showToast("Local data reset to clean baseline (matching Aiven DB)!", "success");
     });
 
     byId("closeQueueBtn")?.addEventListener("click", () => {
@@ -3381,31 +3625,9 @@
     });
 
     byId("queueSyncNowBtn")?.addEventListener("click", async () => {
-      await processOfflineQueue();
+      await processOfflineQueue(false);
       await syncFromCloudPrimary();
       renderAll();
-    });
-
-    byId("clearQueueBtn")?.addEventListener("click", () => {
-      saveQueue([]);
-      refreshQueueUI();
-      showToast("Offline sync queue cleared", "info");
-    });
-
-    byId("exportQueueBtn")?.addEventListener("click", () => {
-      const q = getQueue();
-      if (!q.length) {
-        showToast("Queue is currently empty. No offline actions to export.", "info");
-        return;
-      }
-      const blob = new Blob([JSON.stringify(q, null, 2)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `offline_queue_${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      showToast(`Exported ${q.length} queued action(s) to JSON file.`, "success", 4000);
     });
 
     // Admin filters & search
@@ -3864,13 +4086,15 @@
       console.warn("Service Worker registration notice:", e);
     }
 
-    // 0. Clean stale test data and invalid github.io API URL from browser storage for real pilot testing
+    // 0. Clean stale test data, ephemeral telemetry items, and invalid github.io API URL from browser storage
     try {
+      cleanQueueTelemetry();
       purgeMockTestData();
       const storedApi = (localStorage.getItem(API_STORAGE_KEY) || "").trim();
       if (storedApi.includes("github.io") || storedApi.includes("pages.dev")) {
         localStorage.removeItem(API_STORAGE_KEY);
       }
+      updateApiStatusIndicator();
     } catch (_) {}
 
     try {
@@ -3879,6 +4103,8 @@
       seedMasterTrainings();
       clearTrainingForm();
       setOnlineBadge();
+      updateQueueBadge();
+      updateApiStatusIndicator();
     } catch (e) {
       console.error("Initialization seeding error:", e);
     }

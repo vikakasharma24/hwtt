@@ -65,9 +65,6 @@
           </div>
           <div class="row gap">
             <button id="queueSyncNowBtn" class="btn small" type="button">Sync Now</button>
-            <button id="exportQueueBtn" class="btn small ghost" type="button" title="Download queue JSON to sync directly to Aiven DB">Export JSON</button>
-            <button id="clearQueueBtn" class="btn small ghost" type="button">Clear</button>
-            <button id="resetLocalDataBtn" class="btn small ghost" type="button" title="Reset local storage to clean baseline data">Reset Local Data</button>
             <button id="closeQueueBtn" class="closeBtn" type="button" aria-label="Close Queue">&times;</button>
           </div>
         </div>
@@ -582,6 +579,57 @@
 
         <div id="certContainer">
           <!-- Dynamically populated certificate -->
+        </div>
+      </div>
+    </div>
+
+    <!-- BACKEND API SERVER CONFIGURATION MODAL -->
+    <div id="apiModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="apiModalTitle">
+      <div class="modalDialog" style="max-width: 520px;">
+        <div class="modalHead">
+          <div id="apiModalTitle" class="modalTitle">Cloud Backend & Database Connection</div>
+          <button id="closeApiModalBtn" class="closeBtn" type="button" aria-label="Close modal">&times;</button>
+        </div>
+
+        <div class="form">
+          <div id="apiStatusCard" class="apiStatusCard">
+            <div class="apiStatusHeader">
+              <span id="apiModalStatusDot" class="statusDot"></span>
+              <span id="apiModalStatusText" style="font-weight:700">Checking connection...</span>
+            </div>
+            <div id="apiModalStatusDetail" class="muted" style="font-size:12px; margin-top:4px;">
+              Direct synchronization to Aiven Enterprise Cloud PostgreSQL
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:14px;">
+            <label>Backend API Server URL</label>
+            <input id="apiServerUrlInput" type="url" placeholder="e.g., https://your-backend.onrender.com" />
+            <div class="hint" style="margin-top:5px; line-height:1.4;">
+              Hosted backend running Flask (<code>app.py</code>) connected to Aiven Cloud DB. Leave blank to run in Standalone PWA mode with local browser storage.
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button type="button" id="apiPresetLocalBtn" class="btn small ghost">Local Server (http://127.0.0.1:5000)</button>
+            <button type="button" id="apiPresetStandaloneBtn" class="btn small ghost">Clear / Standalone Mode</button>
+          </div>
+
+          <div id="apiTestFeedback" style="display:none; margin-top:12px; padding:10px 12px; border-radius:8px; font-size:12.5px; font-weight:500;"></div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; border-top:1px solid var(--border); padding-top:14px;">
+            <button type="button" id="apiTestConnBtn" class="btn small">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+              Test Connection
+            </button>
+            <div style="display:flex; gap:8px;">
+              <button type="button" id="apiCloseFooterBtn" class="btn small ghost">Close</button>
+              <button type="button" id="apiSaveBtn" class="btn small">Save & Connect</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
