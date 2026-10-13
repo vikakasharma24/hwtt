@@ -524,7 +524,7 @@
       refreshQueueUI();
       if (!silent) {
         showToast(
-          `Cannot sync to Aiven Cloud DB: Backend API server is offline. ${queue.length} action(s) safely preserved. Start backend with 'python app.py' or open at http://localhost:5000 to sync.`,
+          `Cannot sync to Aiven Cloud DB: Backend API server is offline. ${queue.length} action(s) safely preserved in browser queue. Start backend with 'python app.py' or set your live Render URL in Backend Settings.`,
           "warn",
           7000
         );
@@ -780,42 +780,6 @@
           district: "Ranchi",
           state: "Jharkhand"
         }
-      },
-      {
-        id: "730d0212-b302-4a66-a1f7-bb70d7a7a188",
-        workerUniqueId: "JH148750",
-        phone: "9820194605",
-        password: workerHash,
-        role: ROLES.WORKER,
-        fullName: "Test Offline Worker JH148750",
-        createdAt: nowIso(),
-        profile: {
-          designation: "ANM",
-          facilityName: "Namkum CHC",
-          facilityType: "Other",
-          cityOrVillage: "",
-          districtId: "D-20",
-          district: "Ranchi",
-          state: "Jharkhand"
-        }
-      },
-      {
-        id: "5d3a4e83-8cff-41ef-af42-0c85c16ab048",
-        workerUniqueId: "JH201884",
-        phone: "9876543210",
-        password: workerHash,
-        role: ROLES.WORKER,
-        fullName: "Uniyal Infratech",
-        createdAt: nowIso(),
-        profile: {
-          designation: "ANM",
-          facilityName: "chutia",
-          facilityType: "PHC",
-          cityOrVillage: "Ranchi",
-          districtId: "D-20",
-          district: "Ranchi",
-          state: "Jharkhand"
-        }
       }
     ];
 
@@ -852,92 +816,11 @@
 
 
   function seedMasterTrainings() {
-    let existing = LS.get(DBK.trainings, []);
-    if (!Array.isArray(existing)) existing = [];
-
     const masterTrainings = [
-      {
-        id: "T-TB-001",
-        category: "TB",
-        status: "Published",
-        title: "National Tuberculosis Elimination Program (NTEP) Refresher",
-        startAt: "2026-03-01T09:00:00.000Z",
-        endAt: "2026-12-31T18:00:00.000Z",
-        mode: "hybrid",
-        venue: "State Health Training Centre, Ranchi / Online",
-        attendanceEnabled: true,
-        gpsRequired: false,
-        attendanceOpenAt: "2026-03-01T08:00:00.000Z",
-        attendanceCloseAt: "2026-12-31T19:00:00.000Z",
-        assessments: {
-          pre: [
-            { type: "MCQ", text: "What is the primary causative agent of Tuberculosis (TB)?", marks: 1, options: ["Virus", "Mycobacterium tuberculosis (Bacteria)", "Fungus", "Parasite"], correct: 1 },
-            { type: "TF", text: "Persistent cough for 2 weeks or more is a key symptom of pulmonary TB.", marks: 1, correct: true }
-          ],
-          post: [
-            { type: "MCQ", text: "Which molecular diagnostic test confirms TB and Rifampicin resistance rapidly?", marks: 1, options: ["Complete Blood Count (CBC)", "Chest X-ray", "CBNAAT / TrueNat", "Electrocardiogram (ECG)"], correct: 2 },
-            { type: "TF", text: "Early detection and complete DOTS course adherence prevent MDR-TB emergence.", marks: 1, correct: true }
-          ]
-        },
-        createdAt: "2026-10-05T23:22:11.000Z",
-        updatedAt: "2026-10-05T23:22:28.000Z"
-      },
-      {
-        id: "T-MCH-002",
-        category: "Maternal Health",
-        status: "Published",
-        title: "Comprehensive Maternal & Newborn Health Care Protocols",
-        startAt: "2026-02-28T22:00:00.000Z",
-        endAt: "2026-12-31T07:00:00.000Z",
-        mode: "physical",
-        venue: "District Hospital Conference Hall",
-        attendanceEnabled: true,
-        gpsRequired: false,
-        attendanceOpenAt: "2026-02-28T21:00:00.000Z",
-        attendanceCloseAt: "2026-12-31T08:00:00.000Z",
-        assessments: {
-          pre: [
-            { type: "MCQ", text: "What is the minimum recommended number of Antenatal Care (ANC) checkups during pregnancy?", marks: 1, options: ["1", "2", "4", "6"], correct: 2 },
-            { type: "TF", text: "Iron and Folic Acid (IFA) supplementation is vital to prevent maternal anemia.", marks: 1, correct: true }
-          ],
-          post: [
-            { type: "MCQ", text: "What is the first-line medication protocol for active management of third stage of labor / PPH?", marks: 1, options: ["Oxytocin (10 IU IM)", "Sedatives", "Antibiotics only", "No intervention"], correct: 0 },
-            { type: "TF", text: "Skin-to-skin Kangaroo Mother Care (KMC) significantly improves thermal stabilization in premature neonates.", marks: 1, correct: true }
-          ]
-        },
-        createdAt: "2026-10-05T23:22:11.000Z",
-        updatedAt: "2026-10-06T00:55:12.000Z"
-      },
-      {
-        id: "T-IMNCI-003",
-        category: "Child Nutrition",
-        status: "Published",
-        title: "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification",
-        startAt: "2026-03-01T09:00:00.000Z",
-        endAt: "2026-12-31T18:00:00.000Z",
-        mode: "online",
-        venue: "State Tele-Health Training Portal",
-        attendanceEnabled: true,
-        gpsRequired: false,
-        attendanceOpenAt: "2026-03-01T08:00:00.000Z",
-        attendanceCloseAt: "2026-12-31T19:00:00.000Z",
-        assessments: {
-          pre: [
-            { type: "MCQ", text: "What is the standard diagnostic criteria for Severe Acute Malnutrition (SAM) in children 6-59 months?", marks: 1, options: ["MUAC < 115 mm or bilateral pitting edema", "Weight-for-age < -1 SD", "Height-for-age < -2 SD", "Normal appetite only"], correct: 0 },
-            { type: "TF", text: "Bilateral pitting edema in children indicates severe complicated malnutrition requiring urgent inpatient stabilization.", marks: 1, correct: true }
-          ],
-          post: [
-            { type: "MCQ", text: "What is the initial emergency phase feeding formulation recommended for children with SAM without edema?", marks: 1, options: ["F-75 therapeutic milk", "F-100 therapeutic milk", "Whole cow milk", "High-protein solids"], correct: 0 },
-            { type: "TF", text: "Routine administration of Vitamin A is crucial during treatment of Severe Acute Malnutrition.", marks: 1, correct: true }
-          ]
-        },
-        createdAt: "2026-10-05T23:22:11.000Z",
-        updatedAt: "2026-10-06T00:38:18.000Z"
-      },
       {
         id: "T-UIP-004",
         category: "Immunization",
-        status: "Draft",
+        status: "Published",
         title: "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
         startAt: "2026-03-01T03:30:00.000Z",
         endAt: "2026-12-31T12:30:00.000Z",
@@ -959,36 +842,66 @@
         },
         createdAt: "2026-10-05T23:22:11.000Z",
         updatedAt: "2026-10-07T10:33:33.000Z"
+      },
+      {
+        id: "T-TB-001",
+        category: "TB",
+        status: "Published",
+        title: "National Tuberculosis Elimination Program Refresher",
+        startAt: "2026-03-01T09:00:00.000Z",
+        endAt: "2026-12-31T18:00:00.000Z",
+        mode: "hybrid",
+        venue: "State Health Training Centre, Ranchi / Online",
+        attendanceEnabled: true,
+        gpsRequired: false,
+        attendanceOpenAt: "2026-03-01T08:00:00.000Z",
+        attendanceCloseAt: "2026-12-31T19:00:00.000Z",
+        assessments: {
+          pre: [
+            { type: "MCQ", text: "What is the primary causative agent of Tuberculosis (TB)?", marks: 1, options: ["Virus", "Mycobacterium tuberculosis (Bacteria)", "Fungus", "Parasite"], correct: 1 },
+            { type: "TF", text: "Persistent cough for 2 weeks or more is a key symptom of pulmonary TB.", marks: 1, correct: true }
+          ],
+          post: [
+            { type: "MCQ", text: "Which molecular diagnostic test confirms TB and Rifampicin resistance rapidly?", marks: 1, options: ["Complete Blood Count (CBC)", "Chest X-ray", "CBNAAT / TrueNat", "Electrocardiogram (ECG)"], correct: 2 },
+            { type: "TF", text: "Early detection and complete DOTS course adherence prevent MDR-TB emergence.", marks: 1, correct: true }
+          ]
+        },
+        createdAt: "2026-10-05T23:22:11.000Z",
+        updatedAt: "2026-10-05T23:22:28.000Z"
       }
     ];
 
-    const tMap = new Map();
-    existing.forEach((t) => tMap.set(t.id, t));
-    masterTrainings.forEach((m) => {
-      if (!tMap.has(m.id)) {
-        tMap.set(m.id, m);
-      }
-    });
-    LS.set(DBK.trainings, Array.from(tMap.values()));
+    let existing = LS.get(DBK.trainings, []);
+    if (!Array.isArray(existing) || existing.length === 0) {
+      LS.set(DBK.trainings, masterTrainings);
+    } else {
+      // Retain only valid clean master trainings
+      const allowedIds = new Set(masterTrainings.map((m) => m.id));
+      const filtered = existing.filter((t) => allowedIds.has(t.id));
+      masterTrainings.forEach((m) => {
+        if (!filtered.some((t) => t.id === m.id)) filtered.push(m);
+      });
+      LS.set(DBK.trainings, filtered.length > 0 ? filtered : masterTrainings);
+    }
   }
 
   const seedSampleTrainings = seedMasterTrainings;
 
   function purgeMockTestData() {
     try {
-      // 1. One-time clean baseline sync on GitHub Pages to wipe stale test workers (e.g. Vikash Kumar) and stuck queue
-      const GH_CLEAN_KEY = "jh_gh_pages_baseline_v3";
-      const isStaticDeploy = window.location.hostname.endsWith("github.io") || window.location.hostname.includes("pages.dev");
-      if (isStaticDeploy && !localStorage.getItem(GH_CLEAN_KEY)) {
+      // 1. Pristine clean baseline sync to wipe stale test workers and preserved test actions
+      const CLEAN_BASELINE_KEY = "jh_clean_pilot_baseline_v5";
+      if (!localStorage.getItem(CLEAN_BASELINE_KEY)) {
         localStorage.removeItem(DBK.attendance);
         localStorage.removeItem(DBK.attempts);
         localStorage.removeItem(DBK.offlineQueue);
-        localStorage.removeItem(API_STORAGE_KEY);
-        LS.set(DBK.users, []);
-        localStorage.setItem(GH_CLEAN_KEY, "true");
+        localStorage.removeItem(DBK.session);
+        localStorage.removeItem(DBK.users);
+        localStorage.removeItem(DBK.trainings);
+        localStorage.setItem(CLEAN_BASELINE_KEY, "true");
       }
 
-      // 2. Safe maintenance: only prune invalid null/undefined objects
+      // 2. Safe maintenance: prune invalid null/undefined objects
       let atts = LS.get(DBK.attendance, []);
       if (Array.isArray(atts)) {
         const cleanAtts = atts.filter((a) => a && (a.id || a.trainingId));

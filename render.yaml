@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: hwtt-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        sync: false

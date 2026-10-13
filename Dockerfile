@@ -8,10 +8,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies if needed
+# Install minimal system dependencies (curl for container health checks)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies
@@ -29,4 +28,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:${PORT}/api/health || exit 1
 
 # Launch application via Gunicorn WSGI
-CMD ["sh", "-c", "gunicorn --workers 4 --threads 2 --bind 0.0.0.0:${PORT:-5000} app:app"]
+CMD ["sh", "-c", "gunicorn --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:${PORT:-5000} app:app"]

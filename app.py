@@ -143,45 +143,6 @@ in_memory_db = {
                 ]
             })
         },
-        "T-MCH-002": {
-            "id": "T-MCH-002",
-            "category": "Maternal Health",
-            "status": "Published",
-            "title": "Comprehensive Maternal & Newborn Health Care Protocols",
-            "mode": "physical",
-            "venue": "District Hospital Conference Hall",
-            "start_at": "2026-02-28 22:00:00",
-            "end_at": "2026-12-31 07:00:00",
-            "attendance_enabled": 1,
-            "gps_required": 0,
-            "attendance_open_at": "2026-02-28 21:00:00",
-            "attendance_close_at": "2026-12-31 08:00:00",
-            "assessments_json": json.dumps({
-                "pre": [
-                    {"type": "MCQ", "text": "What is the minimum recommended number of Antenatal Care (ANC) checkups during pregnancy?", "marks": 1, "options": ["1", "2", "4", "6"], "correct": 2},
-                    {"type": "TF", "text": "Iron and Folic Acid (IFA) supplementation is vital to prevent maternal anemia.", "marks": 1, "correct": True}
-                ],
-                "post": [
-                    {"type": "MCQ", "text": "What is the first-line medication protocol for active management of third stage of labor / PPH?", "marks": 1, "options": ["Oxytocin (10 IU IM)", "Sedatives", "Antibiotics only", "No intervention"], "correct": 0},
-                    {"type": "TF", "text": "Skin-to-skin Kangaroo Mother Care (KMC) significantly improves thermal stabilization in premature neonates.", "marks": 1, "correct": True}
-                ]
-            })
-        },
-        "T-IMNCI-003": {
-            "id": "T-IMNCI-003",
-            "category": "Child Nutrition",
-            "status": "Published",
-            "title": "e-IMNCI Protocol: Severe Acute Malnutrition (SAM) Identification",
-            "mode": "online",
-            "venue": "State Tele-Health Training Portal",
-            "start_at": "2026-03-01 09:00:00",
-            "end_at": "2026-12-31 18:00:00",
-            "attendance_enabled": 1,
-            "gps_required": 0,
-            "attendance_open_at": "2026-03-01 08:00:00",
-            "attendance_close_at": "2026-12-31 19:00:00",
-            "assessments_json": None
-        },
         "T-UIP-004": {
             "id": "T-UIP-004",
             "category": "Immunization",
@@ -678,7 +639,7 @@ def auth_login():
     """Enterprise (<2ms) user login authentication against Aiven PostgreSQL (with in-memory fallback)."""
     t0 = datetime.now()
     data = request.get_json() or {}
-    raw_ident = (data.get("phone") or "").strip()
+    raw_ident = (data.get("phone") or data.get("identifier") or data.get("workerUniqueId") or "").strip()
     password = (data.get("password") or "").strip()
 
     if not raw_ident or not password:
@@ -2089,38 +2050,6 @@ def clean_test_data():
             "district_name": "Ranchi",
             "state": "Jharkhand",
             "is_active": 1
-        },
-        {
-            "id": "730d0212-b302-4a66-a1f7-bb70d7a7a188",
-            "worker_unique_id": "JH148750",
-            "phone": "9820194605",
-            "password_hash": "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd",
-            "role": "WORKER",
-            "full_name": "Test Offline Worker JH148750",
-            "designation": "ANM",
-            "facility_name": "Namkum CHC",
-            "facility_type": "Other",
-            "city_or_village": "",
-            "district_id": "D-20",
-            "district_name": "Ranchi",
-            "state": "Jharkhand",
-            "is_active": 1
-        },
-        {
-            "id": "5d3a4e83-8cff-41ef-af42-0c85c16ab048",
-            "worker_unique_id": "JH201884",
-            "phone": "9876543210",
-            "password_hash": "3562e323fc87431e4aecaa006efbaa58fdfc51341f0c2d7539fcf9925c0532fd",
-            "role": "WORKER",
-            "full_name": "Uniyal Infratech",
-            "designation": "ANM",
-            "facility_name": "chutia",
-            "facility_type": "PHC",
-            "city_or_village": "Ranchi",
-            "district_id": "D-20",
-            "district_name": "Ranchi",
-            "state": "Jharkhand",
-            "is_active": 1
         }
     ]
 
@@ -2143,9 +2072,14 @@ def clean_test_data():
                     except Exception as e:
                         logger.warning("Could not delete from %s: %s", t, e)
 
-                # 2. Reset users table to clean baseline
+                # 2. Reset users table to clean baseline (Admin only)
                 tbl_u = resolve_table_name(cur, ["users", "user", "Users"], "users")
-                cur.execute(f"DELETE FROM {tbl_u} WHERE phone NOT IN ('9999999999', '9820194605', '9876543210');")
+                cur.execute(f"DELETE FROM {tbl_u} WHERE phone != '9999999999';")
+                
+                # 3. Clean trainings to keep only 2 clean trainings
+                tbl_t = resolve_table_name(cur, ["trainings", "training", "Trainings"], "trainings")
+                cur.execute(f"DELETE FROM {tbl_t} WHERE id NOT IN ('T-UIP-004', 'T-TB-001');")
+                cur.execute(f"UPDATE {tbl_t} SET status = 'Published', attendance_enabled = 1 WHERE id IN ('T-UIP-004', 'T-TB-001');")
                 for u in baseline_users:
                     cur.execute(f"""
                         INSERT INTO {tbl_u}
