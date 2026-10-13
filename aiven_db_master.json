@@ -511,6 +511,39 @@
       },
       "synced_to_sheets": 1,
       "synced_at": null
+    },
+    {
+      "id": 480,
+      "timestamp": "2026-10-13T15:53:18.770329+00:00",
+      "event_type": "attendance",
+      "actor_role": null,
+      "actor_id": "usr-admin-01",
+      "actor_name": "Dr. Alok Verma",
+      "actor_phone": "9876543210",
+      "worker_unique_id": "JH100001",
+      "full_name": "Dr. Alok Verma",
+      "designation": "State Health Administrator",
+      "facility_name": "State Health Directorate",
+      "facility_type": "PHC",
+      "city_or_village": "Ranchi",
+      "district": "Ranchi",
+      "payload_json": {
+        "id": "att-verify-live-01",
+        "phone": "9876543210",
+        "action": "attendance",
+        "userId": "usr-admin-01",
+        "district": "Ranchi",
+        "fullName": "Dr. Alok Verma",
+        "trainingId": "TR-UIP-002",
+        "designation": "State Health Administrator",
+        "facilityName": "State Health Directorate",
+        "trainingTitle": "Universal Immunization: Vaccine Cold Chain & Anaphylaxis Preparedness",
+        "workerUniqueId": "JH100001",
+        "_skip_relational": true,
+        "attendanceStatus": "Present"
+      },
+      "synced_to_sheets": 1,
+      "synced_at": null
     }
   ]
 }

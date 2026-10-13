@@ -504,16 +504,30 @@
       return;
     }
 
-    const syncUrl = apiUrl("/api/sync/batch");
+    let syncUrl = apiUrl("/api/sync/batch");
+    if (!syncUrl && (detectedLocalApi || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+      syncUrl = (detectedLocalApi || "http://127.0.0.1:5000") + "/api/sync/batch";
+    }
+
     if (!syncUrl) {
-      const count = queue.length;
-      saveQueue([]);
-      LS.set(DBK.lastSync, nowIso());
-      setSyncStatus("success", `Saved in device storage (${count} action(s) synchronized)`);
+      try {
+        const probeRes = await fetch("http://127.0.0.1:5000/api/health", { signal: AbortSignal.timeout(1500) });
+        if (probeRes.ok) {
+          detectedLocalApi = "http://127.0.0.1:5000";
+          syncUrl = "http://127.0.0.1:5000/api/sync/batch";
+        }
+      } catch (_) {}
+    }
+
+    if (!syncUrl) {
+      setSyncStatus("offline_queued", `${queue.length} action(s) preserved in offline queue`);
       refreshQueueUI();
-      renderAll();
       if (!silent) {
-        showToast(`Synchronized: All ${count} action(s) saved securely in device storage.`, "success", 4000);
+        showToast(
+          `Cannot sync to Aiven Cloud DB: Backend API server is offline. ${queue.length} action(s) safely preserved. Start backend with 'python app.py' or open at http://localhost:5000 to sync.`,
+          "warn",
+          7000
+        );
       }
       return;
     }
@@ -1912,7 +1926,8 @@
     const trainings = LS.get(DBK.trainings, []);
     const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
     if (!t || !isPublishedTraining(t)) return false;
-    if (!t.attendanceEnabled) return true;
+    // Strict restriction: If attendance is disabled, do NOT unlock Pre-Test
+    if (!t.attendanceEnabled) return false;
     const att = attendanceFor(t.id, userId);
     return !!(att && (att.attendanceStatus === "Present" || att.status === "Present"));
   }
@@ -1921,6 +1936,10 @@
     const trainings = LS.get(DBK.trainings, []);
     const t = trainings.find((x) => x.id === trainingId || x.title === trainingId);
     if (!t || !isPublishedTraining(t)) return false;
+    // Strict restriction: If attendance is disabled, do NOT unlock Post-Test
+    if (!t.attendanceEnabled) return false;
+    const att = attendanceFor(t.id, userId);
+    if (!att || (att.attendanceStatus !== "Present" && att.status !== "Present")) return false;
     return !!latestAttempt(trainingId, userId, "PRE");
   }
 
@@ -2546,13 +2565,16 @@
         const btnText = att ? "Attendance Marked" : (inWindow ? "Mark Attendance" : "Attendance Closed");
 
         const isAttended = att && (att.attendanceStatus === "Present" || att.status === "Present");
-        const canTakePreTest = isAttended || !t.attendanceEnabled;
+        const canTakePreTest = Boolean(t.attendanceEnabled && isAttended);
+        const canTakePostTest = Boolean(t.attendanceEnabled && isAttended && pre);
         const isPostPassed = post && (post.passed || post.percent >= 60);
         const eligibleForCert = isAttended && isPostPassed;
 
         let preBadge = `<span class="badge" style="background:#f1f5f9;color:#64748b;font-size:11px">🔒 Locked (Mark Attendance First)</span>`;
         if (pre) {
           preBadge = `<span class="badge good" style="font-size:11px">✓ Completed: ${pre.score}/${pre.totalMarks} (${pre.percent}%)</span>`;
+        } else if (!t.attendanceEnabled) {
+          preBadge = `<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:11px">🔒 Locked (Attendance Disabled)</span>`;
         } else if (canTakePreTest) {
           preBadge = `<span class="badge warn" style="font-size:11px">🔓 Ready to Take</span>`;
         }
@@ -2562,6 +2584,8 @@
           const pCls = post.passed || post.percent >= 60 ? "good" : "bad";
           const pTxt = post.passed || post.percent >= 60 ? "Passed" : "Needs Improvement";
           postBadge = `<span class="badge ${pCls}" style="font-size:11px">${pTxt}: ${post.score}/${post.totalMarks} (${post.percent}%)</span>`;
+        } else if (!t.attendanceEnabled) {
+          postBadge = `<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:11px">🔒 Locked (Attendance Disabled)</span>`;
         } else if (pre) {
           postBadge = `<span class="badge warn" style="font-size:11px">🔓 Ready to Take</span>`;
         }
@@ -2588,14 +2612,18 @@
                   📝 Take Pre-Test
                 </button>
               ` : `
-                <button class="btn small ghost" type="button" disabled style="opacity:0.6;cursor:not-allowed" title="Mark attendance first to unlock Pre-Test">
+                <button class="btn small ghost" type="button" disabled style="opacity:0.6;cursor:not-allowed" title="${!t.attendanceEnabled ? 'Attendance is disabled for this training. Pre-Test locked.' : 'Mark attendance first to unlock Pre-Test'}">
                   🔒 Pre-Test (Locked)
                 </button>
-              `) : (!post ? `
+              `) : (!post ? (canTakePostTest ? `
                 <button class="btn small" type="button" data-take-post="${t.id}">
                   📝 Take Post-Test
                 </button>
-              ` : "")}
+              ` : `
+                <button class="btn small ghost" type="button" disabled style="opacity:0.6;cursor:not-allowed" title="${!t.attendanceEnabled ? 'Attendance is disabled for this training. Post-Test locked.' : 'Complete attendance and Pre-Test first'}">
+                  🔒 Post-Test (Locked)
+                </button>
+              `) : "")}
               ${eligibleForCert ? `
                 <button class="btn small success" type="button" data-cert="${t.id}">
                   🏆 View Certificate
@@ -2678,6 +2706,19 @@
       preBtn.disabled = true;
       postBtn.disabled = true;
       note.textContent = "Worker login required.";
+      return;
+    }
+
+    const trainings = LS.get(DBK.trainings, []);
+    const t = trainings.find((x) => x.id === tid || x.title === tid);
+    if (t && !t.attendanceEnabled) {
+      preBtn.disabled = true;
+      preBtn.innerHTML = "🔒 Take Pre-Test (Locked)";
+      preBtn.setAttribute("title", "Attendance is disabled for this training. Assessments are locked.");
+      postBtn.disabled = true;
+      postBtn.innerHTML = "🔒 Take Post-Test (Locked)";
+      postBtn.setAttribute("title", "Attendance is disabled for this training. Assessments are locked.");
+      note.innerHTML = `<span style="color:#ef4444;font-weight:600">🔒 Attendance Disabled:</span> Attendance is disabled for this training. Pre-Test and Post-Test cannot be unlocked.`;
       return;
     }
 
