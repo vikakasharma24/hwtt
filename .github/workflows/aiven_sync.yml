@@ -24,7 +24,7 @@ jobs:
 
       - name: Export Aiven PostgreSQL Snapshot
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgres://avnadmin:AVNS_yag-iD7BkdGKwWw4jXs@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || '/IYu3Xn763nGqSuBf7FDma+woGu653fEPTJ/g18tx1t4yMc85ME0RshZ2R5GrZQMV0vAMS2rMYXjJodQ1Sthc+3LtA+q+jMcgB9bH/EjInNIagckQBuizbW/ksINEMT1tTrBi7Aught4KTWLdrfb5G1t6yAudPwJdabAHu8psKq2IbS955oWaKvb2dOJFytb2Z47+lZB/noMV6YSfgzqGEJnMhNWJGtDlprlrtVzIYahDcIYM+Kergyv1QIkUQlZrrS62WF0LR2Wo1e0aaDh1nWS92BiU2aRS/jIkwKFjh2Me1e3xp5gRJdTKTNdK6auonPvjR57b5GVJa+oNpEXUjUA+CPgd7SHpCbM9LgbHmI2SGSldlFboA==' }}
         run: |
           python export_aiven_db.py
 
