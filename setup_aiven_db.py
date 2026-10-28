@@ -96,6 +96,7 @@ def create_schema(pg_conn):
     );
     CREATE INDEX IF NOT EXISTS idx_att_training ON attendance(training_id);
     CREATE INDEX IF NOT EXISTS idx_att_user ON attendance(user_id);
+    CREATE INDEX IF NOT EXISTS idx_att_comp ON attendance(training_id, worker_unique_id);
 
     CREATE TABLE IF NOT EXISTS attempts (
         id BIGSERIAL PRIMARY KEY,
@@ -119,6 +120,8 @@ def create_schema(pg_conn):
     CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(user_id);
     CREATE INDEX IF NOT EXISTS idx_attempts_training ON attempts(training_id);
     CREATE INDEX IF NOT EXISTS idx_attempts_test_type ON attempts(test_type);
+    CREATE INDEX IF NOT EXISTS idx_attempts_wid ON attempts(worker_unique_id);
+    CREATE INDEX IF NOT EXISTS idx_attempts_comp ON attempts(training_id, user_id, test_type);
 
     CREATE TABLE IF NOT EXISTS assessments (
         id BIGSERIAL PRIMARY KEY,

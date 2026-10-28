@@ -447,6 +447,8 @@ def init_db():
                 );
                 CREATE INDEX IF NOT EXISTS idx_att_training ON attendance(training_id);
                 CREATE INDEX IF NOT EXISTS idx_att_user ON attendance(user_id);
+                CREATE INDEX IF NOT EXISTS idx_att_wid ON attendance(worker_unique_id);
+                CREATE INDEX IF NOT EXISTS idx_att_comp ON attendance(training_id, worker_unique_id);
             """)
 
             # 4. Assessments Table
@@ -489,6 +491,8 @@ def init_db():
                 );
                 CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(user_id);
                 CREATE INDEX IF NOT EXISTS idx_attempts_training ON attempts(training_id);
+                CREATE INDEX IF NOT EXISTS idx_attempts_wid ON attempts(worker_unique_id);
+                CREATE INDEX IF NOT EXISTS idx_attempts_comp ON attempts(training_id, user_id, test_type);
             """)
 
             # 6. Event Logs Table

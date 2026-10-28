@@ -2,11 +2,22 @@ services:
   - type: web
     name: hwtt-backend
     runtime: python
-    plan: free
+    region: singapore # High connectivity to India/Jharkhand
+    plan: standard # 2GB RAM / 1 vCPU per instance
+    scaling:
+      minInstances: 2
+      maxInstances: 4
+      targetCPUPercent: 75
+      targetMemoryPercent: 80
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT app:app
+    startCommand: gunicorn -c gunicorn.conf.py app:app
+    healthCheckPath: /api/health
     envVars:
       - key: PORT
         value: 5000
+      - key: WEB_CONCURRENCY
+        value: 4
+      - key: GUNICORN_THREADS
+        value: 4
       - key: DATABASE_URL
         sync: false

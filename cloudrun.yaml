@@ -1,0 +1,63 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: hwtt-backend
+  labels:
+    cloud.googleapis.com/location: asia-south1
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/description: "Jharkhand Health Worker Training Tool Backend API (Enterprise Scale)"
+spec:
+  template:
+    metadata:
+      annotations:
+        # Autoscaling: 2-4 instances for 1M+ active users
+        autoscaling.knative.dev/minScale: "2"
+        autoscaling.knative.dev/maxScale: "4"
+        # CPU allocation & startup optimization
+        run.googleapis.com/cpu-throttling: "false" # Always allocate CPU for background AI triage & pool pings
+        run.googleapis.com/startup-cpu-boost: "true" # 2x CPU during cold starts
+        run.googleapis.com/execution-environment: "gen2"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      serviceAccountName: hwtt-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com
+      containers:
+        - image: gcr.io/${PROJECT_ID}/hwtt-backend:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "2000m" # 2 vCPU
+              memory: "2048Mi" # 2 GB RAM
+            requests:
+              cpu: "1000m" # 1 vCPU guaranteed
+              memory: "1024Mi" # 1 GB RAM guaranteed
+          env:
+            - name: PORT
+              value: "8080"
+            - name: WEB_CONCURRENCY
+              value: "4"
+            - name: GUNICORN_THREADS
+              value: "4"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: DATABASE_URL
+                  key: latest
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
