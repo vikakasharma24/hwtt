@@ -28,13 +28,16 @@ def hash_password(plain_text: str) -> str:
 def run():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        pghost = os.getenv("PGHOST", "pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com")
+        pghost = os.getenv("PGHOST", "")
         pgport = os.getenv("PGPORT", "14071")
         pguser = os.getenv("PGUSER", "avnadmin")
-        pgpass = os.getenv("PGPASSWORD", "AVNS_yag-iD7BkdGKwWw4jXs")
+        pgpass = os.getenv("PGPASSWORD", "")
         pgdb = os.getenv("PGDATABASE", "defaultdb")
         pgssl = os.getenv("PGSSLMODE", "require")
-        database_url = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"
+        if pghost and pgpass:
+            database_url = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"
+        else:
+            database_url = ""
 
     print("=================================================================")
     print(">> POPULATING AIVEN CLOUD POSTGRESQL FROM GOOGLE SHEETS")
