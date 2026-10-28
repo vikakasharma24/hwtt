@@ -63,14 +63,14 @@ except ImportError:
     pass
 
 # Database Configuration (Aiven.io PostgreSQL Enterprise)
-DEFAULT_AIVEN_URL = "postgres://avnadmin:AVNS_yag-iD7BkdGKwWw4jXs@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require"
-AIVEN_IP_URL = "postgres://avnadmin:AVNS_yag-iD7BkdGKwWw4jXs@167.71.239.190:14071/defaultdb?sslmode=require"
+DEFAULT_AIVEN_URL = "postgres://avnadmin:AVNS_zJyzzWCVcn3C-9M8vma@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require"
+AIVEN_IP_URL = "postgres://avnadmin:AVNS_zJyzzWCVcn3C-9M8vma@167.71.239.190:14071/defaultdb?sslmode=require"
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     pghost = os.getenv("PGHOST", "pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com")
     pgport = os.getenv("PGPORT", "14071")
     pguser = os.getenv("PGUSER", "avnadmin")
-    pgpass = os.getenv("PGPASSWORD", "AVNS_yag-iD7BkdGKwWw4jXs")
+    pgpass = os.getenv("PGPASSWORD", "AVNS_zJyzzWCVcn3C-9M8vma")
     pgdb = os.getenv("PGDATABASE", "defaultdb")
     pgssl = os.getenv("PGSSLMODE", "require")
     DATABASE_URL = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"

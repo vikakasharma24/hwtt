@@ -27,7 +27,7 @@ jobs:
 
       - name: Export Aiven PostgreSQL Snapshot
         env:
-          DATABASE_URL: ${{ postgres://avnadmin:AVNS_zJyzzWCVcn3C-9M8vma@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgres://avnadmin:AVNS_zJyzzWCVcn3C-9M8vma@pg-2c5c09d3-vikashsharmadfy-bf40.g.aivencloud.com:14071/defaultdb?sslmode=require' }}
         run: |
           python export_aiven_db.py
 
