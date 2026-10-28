@@ -4,7 +4,7 @@
   const GOOGLE_SCRIPT_URL = "";
   const PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1";
   const API_STORAGE_KEY = "jh_backend_api_url";
-  const DEFAULT_BACKEND_URL = "";
+  const DEFAULT_BACKEND_URL = "https://hwtt-backend.onrender.com";
 
   function getApiBaseUrl() {
     try {
