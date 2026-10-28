@@ -6,6 +6,9 @@ on:
     # Runs automatically every 6 hours
     - cron: '0 */6 * * *'
 
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -24,13 +27,13 @@ jobs:
 
       - name: Export Aiven PostgreSQL Snapshot
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || '/IYu3Xn763nGqSuBf7FDma+woGu653fEPTJ/g18tx1t4yMc85ME0RshZ2R5GrZQMV0vAMS2rMYXjJodQ1Sthc+3LtA+q+jMcgB9bH/EjInNIagckQBuizbW/ksINEMT1tTrBi7Aught4KTWLdrfb5G1t6yAudPwJdabAHu8psKq2IbS955oWaKvb2dOJFytb2Z47+lZB/noMV6YSfgzqGEJnMhNWJGtDlprlrtVzIYahDcIYM+Kergyv1QIkUQlZrrS62WF0LR2Wo1e0aaDh1nWS92BiU2aRS/jIkwKFjh2Me1e3xp5gRJdTKTNdK6auonPvjR57b5GVJa+oNpEXUjUA+CPgd7SHpCbM9LgbHmI2SGSldlFboA==' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python export_aiven_db.py
 
       - name: Commit and push updated snapshot
         run: |
-          git config --global user.name "Aiven Sync Bot"
-          git config --global user.email "bot@jh-health.gov.in"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add aiven_db_master.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore(sync): update aiven_db_master.json snapshot from Aiven Cloud PostgreSQL" && git push)

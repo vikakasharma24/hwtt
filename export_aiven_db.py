@@ -7,6 +7,7 @@ real, live data matching the Aiven.io database.
 """
 
 import os
+import sys
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -14,29 +15,85 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL is not set in environment or .env")
+
+def get_database_url():
+    url = (os.getenv("DATABASE_URL") or "").strip()
+    if not url:
+        pghost = os.getenv("PGHOST")
+        if pghost:
+            pgport = os.getenv("PGPORT", "14071")
+            pguser = os.getenv("PGUSER", "avnadmin")
+            pgpass = os.getenv("PGPASSWORD", "")
+            pgdb = os.getenv("PGDATABASE", "defaultdb")
+            pgssl = os.getenv("PGSSLMODE", "require")
+            url = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"
+
+    if not url:
+        print("\n" + "=" * 70, file=sys.stderr)
+        print("ERROR: DATABASE_URL is not set!", file=sys.stderr)
+        print("Please configure 'DATABASE_URL' in GitHub Repository Secrets:", file=sys.stderr)
+        print("  1. Go to repository Settings -> Secrets and variables -> Actions", file=sys.stderr)
+        print("  2. Click 'New repository secret'", file=sys.stderr)
+        print("  3. Name: DATABASE_URL", file=sys.stderr)
+        print("  4. Value: postgres://avnadmin:<password>@<host>:<port>/defaultdb?sslmode=require", file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+        sys.exit(1)
+
+    # Detect if user accidentally pasted an encrypted base64 payload or raw token
+    if not (url.startswith("postgres://") or url.startswith("postgresql://")):
+        print("\n" + "=" * 70, file=sys.stderr)
+        print("ERROR: Invalid DATABASE_URL connection string format!", file=sys.stderr)
+        print(f"Received value: '{url[:20]}...' (length: {len(url)})", file=sys.stderr)
+        print("A PostgreSQL connection string must start with 'postgres://' or 'postgresql://'.", file=sys.stderr)
+        print("Note: GitHub Actions secrets are encrypted automatically by GitHub.", file=sys.stderr)
+        print("Do NOT paste manually encrypted base64 ciphertext into the workflow file.", file=sys.stderr)
+        print("Paste the plaintext PostgreSQL URI directly into the GitHub Actions secret.", file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+        sys.exit(1)
+
+    return url
+
 
 def export_aiven():
+    db_url = get_database_url()
     print("Connecting to Aiven Cloud PostgreSQL...")
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+    try:
+        conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    except psycopg2.OperationalError as e:
+        err_msg = str(e).strip()
+        print("\n" + "=" * 70, file=sys.stderr)
+        print(f"DATABASE CONNECTION ERROR: {err_msg}", file=sys.stderr)
+        if "password authentication failed" in err_msg:
+            print("\nHint: The password in DATABASE_URL was rejected by Aiven.", file=sys.stderr)
+            print("Please check your Aiven Console (https://console.aiven.io), obtain the active", file=sys.stderr)
+            print("password for 'avnadmin', and update the DATABASE_URL repository secret in GitHub.", file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"\nFailed to connect to database: {e}\n", file=sys.stderr)
+        sys.exit(1)
+
     cur = conn.cursor()
 
     snapshot = {}
     tables = ["users", "trainings", "attendance", "attempts", "event_logs"]
 
     for tbl in tables:
-        cur.execute(f"SELECT * FROM {tbl};")
-        rows = cur.fetchall()
-        for r in rows:
-            for k, v in r.items():
-                if hasattr(v, "isoformat"):
-                    r[k] = v.isoformat()
-                elif isinstance(v, bytes):
-                    r[k] = v.decode("utf-8", errors="ignore")
-        snapshot[tbl] = rows
-        print(f"  {tbl}: {len(rows)} records")
+        try:
+            cur.execute(f"SELECT * FROM {tbl};")
+            rows = cur.fetchall()
+            for r in rows:
+                for k, v in r.items():
+                    if hasattr(v, "isoformat"):
+                        r[k] = v.isoformat()
+                    elif isinstance(v, bytes):
+                        r[k] = v.decode("utf-8", errors="ignore")
+            snapshot[tbl] = rows
+            print(f"  {tbl}: {len(rows)} records")
+        except Exception as e:
+            print(f"  Warning: could not export table '{tbl}': {e}", file=sys.stderr)
+            conn.rollback()
 
     cur.close()
     conn.close()
@@ -46,6 +103,7 @@ def export_aiven():
         json.dump(snapshot, f, indent=2, default=str)
 
     print(f"Snapshot written to {out_path} successfully.")
+
 
 if __name__ == "__main__":
     export_aiven()
