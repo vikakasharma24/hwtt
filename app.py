@@ -23,6 +23,7 @@ import logging
 import urllib.request
 import urllib.error
 import threading
+import time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, send_from_directory
@@ -175,18 +176,65 @@ in_memory_db = {
 }
 
 
+def seed_in_memory_from_snapshot():
+    """Populates in_memory_db from aiven_db_master.json snapshot for seamless offline fallback."""
+    snap_path = os.path.join(os.path.dirname(__file__), "aiven_db_master.json")
+    if not os.path.exists(snap_path):
+        return
+    try:
+        with open(snap_path, "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        if not isinstance(snap, dict):
+            return
+
+        for u in snap.get("users") or []:
+            if isinstance(u, dict) and u.get("id"):
+                in_memory_db["users"][u["id"]] = {**u, **in_memory_db["users"].get(u["id"], {})}
+
+        for t in snap.get("trainings") or []:
+            if isinstance(t, dict) and t.get("id"):
+                in_memory_db["trainings"][t["id"]] = {**t, **in_memory_db["trainings"].get(t["id"], {})}
+
+        if snap.get("attendance") and not in_memory_db["attendance"]:
+            in_memory_db["attendance"] = snap["attendance"]
+
+        if snap.get("attempts") and not in_memory_db["attempts"]:
+            in_memory_db["attempts"] = snap["attempts"]
+
+        if snap.get("event_logs") and not in_memory_db["event_logs"]:
+            in_memory_db["event_logs"] = snap["event_logs"]
+
+        logger.info("in_memory_db seeded from snapshot: %d users, %d trainings, %d attendance, %d attempts.",
+                    len(in_memory_db["users"]), len(in_memory_db["trainings"]),
+                    len(in_memory_db["attendance"]), len(in_memory_db["attempts"]))
+    except Exception as ex:
+        logger.warning("Could not seed in_memory_db from snapshot: %s", ex)
+
+seed_in_memory_from_snapshot()
+
+
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 
 _db_pool = None
 _db_pool_lock = threading.Lock()
+_last_db_connect_failure_time = 0.0
+DB_CIRCUIT_BREAKER_SECONDS = 30.0
 
-def get_db_pool():
-    global _db_pool
+def get_db_pool(force: bool = False):
+    global _db_pool, _last_db_connect_failure_time
     if not DATABASE_URL:
         return None
+
+    now = time.time()
+    if not force and _db_pool is None and (now - _last_db_connect_failure_time) < DB_CIRCUIT_BREAKER_SECONDS:
+        return None
+
     with _db_pool_lock:
+        now = time.time()
+        if not force and _db_pool is None and (now - _last_db_connect_failure_time) < DB_CIRCUIT_BREAKER_SECONDS:
+            return None
         if _db_pool is None or getattr(_db_pool, "closed", False):
             try:
                 _db_pool = pool.ThreadedConnectionPool(
@@ -194,15 +242,17 @@ def get_db_pool():
                     maxconn=20,
                     dsn=DATABASE_URL,
                     cursor_factory=RealDictCursor,
-                    connect_timeout=5,
+                    connect_timeout=3,
                     keepalives=1,
                     keepalives_idle=30,
                     keepalives_interval=10,
                     keepalives_count=5
                 )
                 logger.info("Aiven PostgreSQL Enterprise ThreadedConnectionPool initialized (min=2, max=20).")
+                _last_db_connect_failure_time = 0.0
             except Exception as e:
-                logger.warning("Could not initialize PostgreSQL connection pool: %s", e)
+                _last_db_connect_failure_time = time.time()
+                logger.warning("Could not initialize PostgreSQL connection pool: %s (Circuit breaker tripped for %ds)", e, int(DB_CIRCUIT_BREAKER_SECONDS))
                 _db_pool = None
     return _db_pool
 
@@ -247,8 +297,9 @@ class PooledConnWrapper:
 
 def get_db_connection(force: bool = False):
     """Acquires a verified, healthy connection from the Aiven PostgreSQL connection pool."""
-    p = get_db_pool()
+    p = get_db_pool(force=force)
     if p:
+        raw = None
         try:
             raw = p.getconn()
             try:
@@ -266,41 +317,21 @@ def get_db_connection(force: bool = False):
                 cur.execute("SELECT 1;")
             return PooledConnWrapper(raw, p)
         except Exception as e:
-            logger.warning("Pooled connection checkout failed (%s). Attempting fresh reconnect.", e)
-            try:
-                p.putconn(raw, close=True)
-            except Exception:
-                pass
-            # Fresh direct connection fallback
-            try:
-                fresh = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=5)
-                fresh.autocommit = True
-                return fresh
-            except Exception as err:
-                logger.error("Direct PostgreSQL fallback connection failed: %s", err)
-                if AIVEN_IP_URL:
-                    try:
-                        fresh_ip = psycopg2.connect(AIVEN_IP_URL, cursor_factory=RealDictCursor, connect_timeout=5)
-                        fresh_ip.autocommit = True
-                        logger.info("Direct PostgreSQL fallback connected via resilient IP.")
-                        return fresh_ip
-                    except Exception as ip_err:
-                        logger.error("Direct PostgreSQL IP fallback also failed: %s", ip_err)
-    elif DATABASE_URL:
+            logger.warning("Pooled connection checkout failed (%s).", e)
+            if raw and p:
+                try:
+                    p.putconn(raw, close=True)
+                except Exception:
+                    pass
+            return None
+    elif DATABASE_URL and force:
         try:
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=5)
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=3)
             conn.autocommit = True
             return conn
         except Exception as err:
             logger.error("Direct PostgreSQL connection failed: %s", err)
-            if AIVEN_IP_URL:
-                try:
-                    conn_ip = psycopg2.connect(AIVEN_IP_URL, cursor_factory=RealDictCursor, connect_timeout=5)
-                    conn_ip.autocommit = True
-                    logger.info("Direct PostgreSQL connected via resilient IP.")
-                    return conn_ip
-                except Exception as ip_err:
-                    logger.error("Direct PostgreSQL IP fallback failed: %s", ip_err)
+            return None
     return None
 
 def release_db_connection(conn):
@@ -2256,7 +2287,8 @@ def db_diagnostic():
         "timestamp": datetime.now().isoformat() + "Z"
     }
     t0 = datetime.now()
-    conn = get_db_connection(force=True)
+    force_refresh = request.args.get("refresh") == "1"
+    conn = get_db_connection(force=force_refresh)
     if conn:
         result["cloud_db_connected"] = True
         result["latency_ms"] = round((datetime.now() - t0).total_seconds() * 1000, 2)
@@ -2302,7 +2334,7 @@ def db_diagnostic():
 @app.route("/api/health", methods=["GET"])
 def health_check():
     """Health status and performance diagnostic."""
-    conn = get_db_connection(force=True)
+    conn = get_db_connection(force=False)
     db_connected = conn is not None
     db_version = "In-Memory Fallback Active"
     if conn:
