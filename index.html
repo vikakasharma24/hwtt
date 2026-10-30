@@ -85,7 +85,10 @@
           </div>
         </div>
         <div id="queueList" class="queueListContainer"></div>
-        <div class="hint" style="margin-top:10px">When connection is restored, pending actions sync automatically to Aiven Enterprise Cloud DB.</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px;">
+          <div class="hint" style="margin:0">Pending actions sync to Aiven Cloud DB via Backend API.</div>
+          <button id="queueOpenSettingsBtn" class="btn small ghost" type="button" style="padding:2px 8px; font-size:11px;">⚙️ Backend Settings</button>
+        </div>
       </div>
     </div>
 
@@ -749,7 +752,7 @@
 
           <div class="field" style="margin-top:14px;">
             <label>Backend API Server URL</label>
-            <input id="apiServerUrlInput" type="url" placeholder="e.g., https://your-backend.onrender.com" />
+            <input id="apiServerUrlInput" type="url" placeholder="e.g., https://hwtt-y8f2.onrender.com" />
             <div class="hint" style="margin-top:5px; line-height:1.4;">
               Hosted backend running Flask (<code>app.py</code>) connected to Aiven Cloud DB. Leave blank to run in Standalone PWA mode with local browser storage.
             </div>

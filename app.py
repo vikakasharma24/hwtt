@@ -1136,113 +1136,125 @@ def format_datetime_str(val):
 format_mysql_dt = format_datetime_str
 
 
+def save_training_record(data: dict) -> dict:
+    """Saves or updates a training record in Aiven PostgreSQL and in-memory store."""
+    if not isinstance(data, dict):
+        return {"status": "error", "message": "Invalid training data", "code": 400}
+    t = data.get("training") if isinstance(data.get("training"), dict) else data
+    training_id = (t.get("id") or t.get("trainingId") or "").strip()
+    if not training_id:
+        training_id = f"T-{uuid.uuid4().hex[:8].upper()}"
+
+    title = (t.get("title") or t.get("trainingTitle") or "").strip()
+    category = (t.get("category") or t.get("trainingCategory") or "General").strip()
+    status = (t.get("status") or "Draft").strip()
+    mode = (t.get("mode") or "online").strip().lower()
+    if mode not in ("physical", "online", "hybrid"):
+        mode = "hybrid"
+    venue = (t.get("venue") or "").strip()
+
+    start_at = format_datetime_str(t.get("startAt") or t.get("start_at"))
+    end_at = format_datetime_str(t.get("endAt") or t.get("end_at"))
+    if not start_at or not end_at:
+        now = datetime.now()
+        start_at = start_at or now.strftime("%Y-%m-%d %H:%M:%S")
+        end_at = end_at or (now + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+    attendance_enabled = 1 if t.get("attendanceEnabled", t.get("attendance_enabled", True)) else 0
+    gps_required = 1 if t.get("gpsRequired", t.get("gps_required", False)) else 0
+
+    attendance_open_at = format_datetime_str(t.get("attendanceOpenAt") or t.get("attendance_open_at"))
+    attendance_close_at = format_datetime_str(t.get("attendanceCloseAt") or t.get("attendance_close_at"))
+
+    assessments = t.get("assessments") or t.get("assessments_json")
+    if assessments is not None:
+        if isinstance(assessments, (dict, list)):
+            assessments_json = json.dumps(assessments)
+        else:
+            assessments_json = str(assessments)
+    else:
+        assessments_json = None
+
+    # Always update in-memory store
+    in_memory_db["trainings"][training_id] = {
+        "id": training_id, "category": category, "status": status, "title": title,
+        "mode": mode, "venue": venue, "start_at": start_at, "end_at": end_at,
+        "attendance_enabled": attendance_enabled, "gps_required": gps_required,
+        "attendance_open_at": attendance_open_at, "attendance_close_at": attendance_close_at,
+        "assessments_json": assessments_json
+    }
+
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                tbl = resolve_table_name(cur, ["trainings", "training", "Trainings", "Training"], "trainings")
+                upsert_sql = f"""
+                    INSERT INTO {tbl} (
+                        id, category, status, title, mode, venue,
+                        start_at, end_at, attendance_enabled, gps_required,
+                        attendance_open_at, attendance_close_at, assessments_json
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        category = EXCLUDED.category,
+                        status = EXCLUDED.status,
+                        title = EXCLUDED.title,
+                        mode = EXCLUDED.mode,
+                        venue = EXCLUDED.venue,
+                        start_at = EXCLUDED.start_at,
+                        end_at = EXCLUDED.end_at,
+                        attendance_enabled = EXCLUDED.attendance_enabled,
+                        gps_required = EXCLUDED.gps_required,
+                        attendance_open_at = EXCLUDED.attendance_open_at,
+                        attendance_close_at = EXCLUDED.attendance_close_at,
+                        assessments_json = COALESCE(EXCLUDED.assessments_json, {tbl}.assessments_json),
+                        updated_at = CURRENT_TIMESTAMP;
+                """
+                cur.execute(upsert_sql, (
+                    training_id, category, status, title, mode, venue,
+                    start_at, end_at, attendance_enabled, gps_required,
+                    attendance_open_at, attendance_close_at, assessments_json
+                ))
+            logger.info("Persisted training %s with status '%s' to Aiven PostgreSQL.", training_id, status)
+            return {
+                "status": "success",
+                "message": f"Training '{title}' ({training_id}) saved with status '{status}'",
+                "training_id": training_id,
+                "training_status": status,
+                "code": 200
+            }
+        except Exception as e:
+            logger.error("Failed to save training to PostgreSQL: %s", e)
+            return {
+                "status": "success",
+                "message": f"Training '{title}' saved locally (DB err: {e})",
+                "training_id": training_id,
+                "training_status": status,
+                "code": 200
+            }
+        finally:
+            conn.close()
+    else:
+        return {
+            "status": "success",
+            "message": "Training saved to in-memory store",
+            "training_id": training_id,
+            "training_status": status,
+            "code": 200
+        }
+
+
 @app.route("/api/trainings", methods=["GET", "POST"])
 def manage_trainings():
     """Fetches all trainings (GET) or creates/updates a training (POST) in Aiven PostgreSQL."""
     if request.method == "POST":
         data = request.get_json() or {}
-        training_id = (data.get("id") or "").strip()
-        if not training_id:
-            training_id = f"T-{uuid.uuid4().hex[:8].upper()}"
-
-        title = (data.get("title") or "").strip()
-        category = (data.get("category") or "General").strip()
-        status = (data.get("status") or "Draft").strip()
-        mode = (data.get("mode") or "online").strip().lower()
-        if mode not in ("physical", "online", "hybrid"):
-            mode = "hybrid"
-        venue = (data.get("venue") or "").strip()
-
-        start_at = format_datetime_str(data.get("startAt") or data.get("start_at"))
-        end_at = format_datetime_str(data.get("endAt") or data.get("end_at"))
-        if not start_at or not end_at:
-            now = datetime.now()
-            start_at = start_at or now.strftime("%Y-%m-%d %H:%M:%S")
-            end_at = end_at or (now + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-
-        attendance_enabled = 1 if data.get("attendanceEnabled", data.get("attendance_enabled", True)) else 0
-        gps_required = 1 if data.get("gpsRequired", data.get("gps_required", False)) else 0
-
-        attendance_open_at = format_datetime_str(data.get("attendanceOpenAt") or data.get("attendance_open_at"))
-        attendance_close_at = format_datetime_str(data.get("attendanceCloseAt") or data.get("attendance_close_at"))
-
-        assessments = data.get("assessments") or data.get("assessments_json")
-        if assessments is not None:
-            if isinstance(assessments, (dict, list)):
-                assessments_json = json.dumps(assessments)
-            else:
-                assessments_json = str(assessments)
-        else:
-            assessments_json = None
-
-        # Always update in-memory store
-        in_memory_db["trainings"][training_id] = {
-            "id": training_id, "category": category, "status": status, "title": title,
-            "mode": mode, "venue": venue, "start_at": start_at, "end_at": end_at,
-            "attendance_enabled": attendance_enabled, "gps_required": gps_required,
-            "attendance_open_at": attendance_open_at, "attendance_close_at": attendance_close_at,
-            "assessments_json": assessments_json
-        }
-
-        conn = get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    tbl = resolve_table_name(cur, ["trainings", "training", "Trainings", "Training"], "trainings")
-                    upsert_sql = f"""
-                        INSERT INTO {tbl} (
-                            id, category, status, title, mode, venue,
-                            start_at, end_at, attendance_enabled, gps_required,
-                            attendance_open_at, attendance_close_at, assessments_json
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            category = EXCLUDED.category,
-                            status = EXCLUDED.status,
-                            title = EXCLUDED.title,
-                            mode = EXCLUDED.mode,
-                            venue = EXCLUDED.venue,
-                            start_at = EXCLUDED.start_at,
-                            end_at = EXCLUDED.end_at,
-                            attendance_enabled = EXCLUDED.attendance_enabled,
-                            gps_required = EXCLUDED.gps_required,
-                            attendance_open_at = EXCLUDED.attendance_open_at,
-                            attendance_close_at = EXCLUDED.attendance_close_at,
-                            assessments_json = EXCLUDED.assessments_json,
-                            updated_at = CURRENT_TIMESTAMP;
-                    """
-                    cur.execute(upsert_sql, (
-                        training_id, category, status, title, mode, venue,
-                        start_at, end_at, attendance_enabled, gps_required,
-                        attendance_open_at, attendance_close_at, assessments_json
-                    ))
-                logger.info("Persisted training %s with status '%s' to Aiven PostgreSQL.", training_id, status)
-                return jsonify({
-                    "status": "success",
-                    "message": f"Training '{title}' ({training_id}) saved with status '{status}'",
-                    "training_id": training_id,
-                    "training_status": status
-                }), 200
-            except Exception as e:
-                logger.error("Failed to save training to PostgreSQL: %s", e)
-                return jsonify({
-                    "status": "success",
-                    "message": f"Training '{title}' saved locally (DB: {e})",
-                    "training_id": training_id,
-                    "training_status": status
-                }), 200
-            finally:
-                conn.close()
-        else:
-            return jsonify({
-                "status": "success",
-                "message": "Training saved to in-memory store",
-                "training_id": training_id,
-                "training_status": status
-            }), 200
+        res = save_training_record(data)
+        return jsonify(res), res.get("code", 200)
 
     # GET request:
     conn = get_db_connection()
@@ -1635,12 +1647,14 @@ def sync_batch_api():
     att_count = 0
     atmp_count = 0
     asm_count = 0
+    trn_count = 0
     event_ids = []
 
     user_items = []
     att_items = []
     pre_items = []
     post_items = []
+    training_items = []
     other_items = []
 
     for item in items:
@@ -1660,6 +1674,8 @@ def sync_batch_api():
                 pre_items.append(item)
             else:
                 post_items.append(item)
+        elif "train" in act or act == "training" or item.get("training") or (item.get("category") and item.get("title")):
+            training_items.append(item)
         else:
             other_items.append(item)
 
@@ -1702,7 +1718,16 @@ def sync_batch_api():
         if eid:
             event_ids.append(eid)
 
-    # 4. Process Other Events fifth
+    # 4. Process Trainings fourth
+    for it in training_items:
+        res = save_training_record(it)
+        if res.get("code") in (200, 201, 500):
+            trn_count += 1
+        eid = log_event_async(it.get("action") or it.get("type") or "training", {**it, "_skip_relational": True})
+        if eid:
+            event_ids.append(eid)
+
+    # 5. Process Other Events fifth
     for it in other_items:
         ev_type = it.get("type") or it.get("event") or "general_event"
         eid = log_event_async(ev_type, {**it, "_skip_relational": True})
@@ -1711,8 +1736,8 @@ def sync_batch_api():
 
     elapsed_ms = (datetime.now() - t0).total_seconds() * 1000
     logger.info(
-        "Batch Sync Processed: Total=%d (Users=%d, Attendance=%d, Attempts=%d, Assessments=%d) in %.2fms",
-        len(items), usr_count, att_count, atmp_count, asm_count, elapsed_ms
+        "Batch Sync Processed: Total=%d (Users=%d, Attendance=%d, Attempts=%d, Assessments=%d, Trainings=%d) in %.2fms",
+        len(items), usr_count, att_count, atmp_count, asm_count, trn_count, elapsed_ms
     )
 
     return jsonify({
@@ -1724,6 +1749,7 @@ def sync_batch_api():
         "attendance_synced": att_count,
         "attempts_synced": atmp_count,
         "assessments_synced": asm_count,
+        "trainings_synced": trn_count,
         "event_ids": event_ids,
         "latency_ms": round(elapsed_ms, 2)
     }), 200

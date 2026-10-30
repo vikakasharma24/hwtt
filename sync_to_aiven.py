@@ -125,14 +125,44 @@ def sync_items(items):
 
         # 4. Training Created or Updated
         elif "train" in act or (p.get("category") and p.get("title") and p.get("startAt")):
-            tid = p.get("id") or p.get("trainingId")
-            assessments = p.get("assessments")
+            t = p.get("training") if isinstance(p.get("training"), dict) else p
+            tid = t.get("id") or t.get("trainingId") or p.get("id") or p.get("trainingId")
+            if not tid:
+                print(f"  [Warning] Skipping training payload without ID: {p}")
+                continue
+
+            status = t.get("status") or p.get("status") or "Published"
+            title = t.get("title") or p.get("title") or t.get("trainingTitle") or p.get("trainingTitle") or ""
+            category = t.get("category") or p.get("category") or t.get("trainingCategory") or p.get("trainingCategory") or "General"
+            mode = t.get("mode") or p.get("mode") or "hybrid"
+            venue = t.get("venue") or p.get("venue") or ""
+            start_at = t.get("startAt") or t.get("start_at") or p.get("startAt") or p.get("start_at")
+            end_at = t.get("endAt") or t.get("end_at") or p.get("endAt") or p.get("end_at")
+            attendance_enabled = 1 if (t.get("attendanceEnabled") or p.get("attendanceEnabled")) else 0
+            gps_required = 1 if (t.get("gpsRequired") or p.get("gpsRequired")) else 0
+            attendance_open_at = t.get("attendanceOpenAt") or t.get("attendance_open_at") or p.get("attendanceOpenAt") or p.get("attendance_open_at")
+            attendance_close_at = t.get("attendanceCloseAt") or t.get("attendance_close_at") or p.get("attendanceCloseAt") or p.get("attendance_close_at")
+
+            assessments = t.get("assessments") or p.get("assessments")
             if isinstance(assessments, dict):
                 assess_str = json.dumps(assessments)
             elif isinstance(assessments, str):
                 assess_str = assessments
             else:
                 assess_str = None
+
+            # If it's only a status change or telemetry update without date/schedule payload
+            if act in ("training_status_updated", "training_updated") and not (t.get("startAt") or p.get("startAt")):
+                cur.execute("""
+                    UPDATE trainings
+                    SET status = COALESCE(%s, status),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s;
+                """, (status, tid))
+                if cur.rowcount > 0:
+                    trainings_synced += 1
+                    print(f"  [Training] Status updated: {title or tid} ({status})")
+                    continue
 
             cur.execute("""
                 INSERT INTO trainings (
@@ -141,36 +171,36 @@ def sync_items(items):
                     attendance_open_at, attendance_close_at, assessments_json, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 ON CONFLICT (id) DO UPDATE SET
-                    category = EXCLUDED.category,
+                    category = COALESCE(NULLIF(EXCLUDED.category, ''), trainings.category),
                     status = EXCLUDED.status,
-                    title = EXCLUDED.title,
-                    mode = EXCLUDED.mode,
-                    venue = EXCLUDED.venue,
-                    start_at = EXCLUDED.start_at,
-                    end_at = EXCLUDED.end_at,
+                    title = COALESCE(NULLIF(EXCLUDED.title, ''), trainings.title),
+                    mode = COALESCE(NULLIF(EXCLUDED.mode, ''), trainings.mode),
+                    venue = COALESCE(NULLIF(EXCLUDED.venue, ''), trainings.venue),
+                    start_at = COALESCE(EXCLUDED.start_at, trainings.start_at),
+                    end_at = COALESCE(EXCLUDED.end_at, trainings.end_at),
                     attendance_enabled = EXCLUDED.attendance_enabled,
                     gps_required = EXCLUDED.gps_required,
-                    attendance_open_at = EXCLUDED.attendance_open_at,
-                    attendance_close_at = EXCLUDED.attendance_close_at,
+                    attendance_open_at = COALESCE(EXCLUDED.attendance_open_at, trainings.attendance_open_at),
+                    attendance_close_at = COALESCE(EXCLUDED.attendance_close_at, trainings.attendance_close_at),
                     assessments_json = COALESCE(EXCLUDED.assessments_json, trainings.assessments_json),
                     updated_at = CURRENT_TIMESTAMP;
             """, (
                 tid,
-                p.get("category") or "General",
-                p.get("status") or "Published",
-                p.get("title") or p.get("trainingTitle"),
-                p.get("mode") or "hybrid",
-                p.get("venue") or "",
-                p.get("startAt") or p.get("start_at"),
-                p.get("endAt") or p.get("end_at"),
-                1 if p.get("attendanceEnabled") else 0,
-                1 if p.get("gpsRequired") else 0,
-                p.get("attendanceOpenAt") or p.get("attendance_open_at"),
-                p.get("attendanceCloseAt") or p.get("attendance_close_at"),
+                category,
+                status,
+                title,
+                mode,
+                venue,
+                start_at,
+                end_at,
+                attendance_enabled,
+                gps_required,
+                attendance_open_at,
+                attendance_close_at,
                 assess_str
             ))
             trainings_synced += 1
-            print(f"  [Training] Synced: {p.get('title') or tid} ({p.get('status')})")
+            print(f"  [Training] Synced: {title or tid} ({status})")
 
     conn.commit()
     cur.close()

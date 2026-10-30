@@ -4,7 +4,7 @@
   const GOOGLE_SCRIPT_URL = "";
   const PASSWORD_SALT = "JH_HEALTH_PORTAL_SALT_v1";
   const API_STORAGE_KEY = "jh_backend_api_url";
-  const DEFAULT_BACKEND_URL = "https://hwtt-backend.onrender.com";
+  const DEFAULT_BACKEND_URL = "https://hwtt-y8f2.onrender.com";
 
   function getApiBaseUrl() {
     try {
@@ -33,20 +33,20 @@
       }
     } catch (_) {}
 
-    if (DEFAULT_BACKEND_URL) {
-      return DEFAULT_BACKEND_URL;
-    }
-
     if (window.location.port === "5000") {
       return "";
+    }
+
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:5000`;
     }
 
     if (window.location.protocol === "file:") {
       return "http://localhost:5000";
     }
 
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return `${window.location.protocol}//${window.location.hostname}:5000`;
+    if (DEFAULT_BACKEND_URL) {
+      return DEFAULT_BACKEND_URL;
     }
 
     return "";
@@ -469,8 +469,8 @@
         `;
       } else {
         list.innerHTML = queue.map((item, idx) => {
-          const type = item.payload?.type || item.payload?.event || "Action";
-          const title = item.payload?.trainingTitle || item.payload?.fullName || item.payload?.phone || "Data payload";
+          const type = item.payload?.type || item.payload?.event || item.payload?.action || "Action";
+          const title = item.payload?.trainingTitle || item.payload?.training?.title || item.payload?.fullName || item.payload?.phone || "Data payload";
           return `
             <div class="queueItem">
               <div class="queueItemTitle">
@@ -628,6 +628,17 @@
         await syncFromCloudPrimary();
         renderAll();
         return;
+      } else {
+        console.warn(`Primary batch sync failed with HTTP ${batchRes.status}`);
+        if (batchRes.status === 404 || batchRes.status === 502 || batchRes.status === 503) {
+          const errMsg = `Backend API at ${syncUrl} returned HTTP ${batchRes.status}. Server is unreachable or not deployed.`;
+          setSyncStatus("network_error", errMsg);
+          refreshQueueUI();
+          if (!silent) {
+            showToast(errMsg + " Start 'python app.py' or check Backend Settings.", "error", 8000);
+          }
+          return;
+        }
       }
     } catch (batchErr) {
       console.warn("Primary batch sync failed, attempting individual fallbacks:", batchErr);
@@ -667,7 +678,7 @@
             body: JSON.stringify(p)
           });
           if (res.ok) success = true;
-        } else if (action === "training_created" || action === "training_updated" || action === "training") {
+        } else if (action === "training_created" || action === "training_updated" || action === "training_status_updated" || action === "training") {
           const tRes = await fetch(apiUrl("/api/trainings"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4192,6 +4203,10 @@
       await processOfflineQueue(false);
       await syncFromCloudPrimary();
       renderAll();
+    });
+
+    byId("queueOpenSettingsBtn")?.addEventListener("click", () => {
+      openApiModal();
     });
 
     // Admin filters & search
