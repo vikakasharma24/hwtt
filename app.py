@@ -70,14 +70,14 @@ _FALLBACK_AIVEN_URL = base64.b64decode(
 ).decode("utf-8")
 
 # Database Configuration (Aiven.io PostgreSQL Enterprise)
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip().replace("\r", "").replace("\n", "").strip()
 if not DATABASE_URL:
-    pghost = os.getenv("PGHOST", "")
-    pgport = os.getenv("PGPORT", "14071")
-    pguser = os.getenv("PGUSER", "avnadmin")
-    pgpass = os.getenv("PGPASSWORD", "")
-    pgdb = os.getenv("PGDATABASE", "defaultdb")
-    pgssl = os.getenv("PGSSLMODE", "require")
+    pghost = (os.getenv("PGHOST") or "").strip()
+    pgport = (os.getenv("PGPORT") or "14071").strip()
+    pguser = (os.getenv("PGUSER") or "avnadmin").strip()
+    pgpass = (os.getenv("PGPASSWORD") or "").strip()
+    pgdb = (os.getenv("PGDATABASE") or "defaultdb").strip()
+    pgssl = (os.getenv("PGSSLMODE") or "require").strip()
     if pghost and pgpass:
         DATABASE_URL = f"postgres://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}?sslmode={pgssl}"
     else:

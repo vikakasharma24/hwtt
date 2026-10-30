@@ -24,7 +24,7 @@ _FALLBACK_AIVEN_URL = base64.b64decode(
 
 
 def get_database_url():
-    url = (os.getenv("DATABASE_URL") or "").strip()
+    url = (os.getenv("DATABASE_URL") or "").strip().replace("\r", "").replace("\n", "").strip()
     if not url:
         pghost = os.getenv("PGHOST")
         if pghost:

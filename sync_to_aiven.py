@@ -20,7 +20,7 @@ _FALLBACK_AIVEN_URL = base64.b64decode(
     "cG9zdGdyZXM6Ly9hdm5hZG1pbjpBVk5TX24zbTM1UUt4S1RZM2REeTY4RVhAcGctMmM1YzA5ZDMtdmlrYXNoc2hhcm1hZGZ5LWJmNDAuZy5haXZlbmNsb3VkLmNvbToxNDA3MS9kZWZhdWx0ZGI/c3NsbW9kZT1yZXF1aXJl"
 ).decode("utf-8")
 
-DATABASE_URL = os.getenv("DATABASE_URL") or _FALLBACK_AIVEN_URL
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip().replace("\r", "").replace("\n", "").strip() or _FALLBACK_AIVEN_URL
 
 
 def sync_items(items):
