@@ -226,11 +226,13 @@ from psycopg2.extras import RealDictCursor
 _db_pool = None
 _db_pool_lock = threading.Lock()
 _last_db_connect_failure_time = 0.0
-DB_CIRCUIT_BREAKER_SECONDS = 30.0
+_last_db_error = ""
+DB_CIRCUIT_BREAKER_SECONDS = 5.0
 
 def get_db_pool(force: bool = False):
-    global _db_pool, _last_db_connect_failure_time
+    global _db_pool, _last_db_connect_failure_time, _last_db_error
     if not DATABASE_URL:
+        _last_db_error = "DATABASE_URL is empty"
         return None
 
     now = time.time()
@@ -244,20 +246,22 @@ def get_db_pool(force: bool = False):
         if _db_pool is None or getattr(_db_pool, "closed", False):
             try:
                 _db_pool = pool.ThreadedConnectionPool(
-                    minconn=2,
+                    minconn=1,
                     maxconn=20,
                     dsn=DATABASE_URL,
                     cursor_factory=RealDictCursor,
-                    connect_timeout=3,
+                    connect_timeout=10,
                     keepalives=1,
                     keepalives_idle=30,
                     keepalives_interval=10,
                     keepalives_count=5
                 )
-                logger.info("Aiven PostgreSQL Enterprise ThreadedConnectionPool initialized (min=2, max=20).")
+                logger.info("Aiven PostgreSQL Enterprise ThreadedConnectionPool initialized (min=1, max=20).")
                 _last_db_connect_failure_time = 0.0
+                _last_db_error = ""
             except Exception as e:
                 _last_db_connect_failure_time = time.time()
+                _last_db_error = f"Pool init exception: {e}"
                 logger.warning("Could not initialize PostgreSQL connection pool: %s (Circuit breaker tripped for %ds)", e, int(DB_CIRCUIT_BREAKER_SECONDS))
                 _db_pool = None
     return _db_pool
@@ -302,7 +306,10 @@ class PooledConnWrapper:
 
 
 def get_db_connection(force: bool = False):
-    """Acquires a verified, healthy connection from the Aiven PostgreSQL connection pool."""
+    """Acquires a verified, healthy connection from the Aiven PostgreSQL connection pool,
+    falling back seamlessly to a direct connection if the pool is initializing or exhausted.
+    """
+    global _last_db_error
     p = get_db_pool(force=force)
     if p:
         raw = None
@@ -323,19 +330,24 @@ def get_db_connection(force: bool = False):
                 cur.execute("SELECT 1;")
             return PooledConnWrapper(raw, p)
         except Exception as e:
-            logger.warning("Pooled connection checkout failed (%s).", e)
+            _last_db_error = f"Pool checkout failed: {e}"
+            logger.warning("Pooled connection checkout failed (%s). Attempting direct connection.", e)
             if raw and p:
                 try:
                     p.putconn(raw, close=True)
                 except Exception:
                     pass
-            return None
-    elif DATABASE_URL and force:
+
+    # Direct fallback if pool is not ready
+    if DATABASE_URL:
         try:
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=3)
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, connect_timeout=10)
             conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
             return conn
         except Exception as err:
+            _last_db_error = f"Direct connection failed: {err}"
             logger.error("Direct PostgreSQL connection failed: %s", err)
             return None
     return None
@@ -2376,7 +2388,7 @@ def db_diagnostic():
         finally:
             conn.close()
     else:
-        result["error"] = "Cannot establish connection to Aiven Cloud PostgreSQL. In-memory fallback is active."
+        result["error"] = f"Cannot establish connection to Aiven Cloud PostgreSQL: {_last_db_error or 'Unknown error'}. In-memory fallback is active."
         result["in_memory_counts"] = {
             "users": len(in_memory_db["users"]),
             "trainings": len(in_memory_db["trainings"]),
