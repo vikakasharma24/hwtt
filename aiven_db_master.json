@@ -7390,6 +7390,64 @@
       },
       "synced_to_sheets": 1,
       "synced_at": null
+    },
+    {
+      "id": 663,
+      "timestamp": "2026-11-06T17:21:29.626118+00:00",
+      "event_type": "login",
+      "actor_role": "ADMIN",
+      "actor_id": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+      "actor_name": "State Admin",
+      "actor_phone": "9999999999",
+      "worker_unique_id": "ADMIN-000001",
+      "full_name": "State Admin",
+      "designation": "State Health Administrator",
+      "facility_name": "NHM HQ",
+      "facility_type": "State HQ",
+      "city_or_village": "Ranchi",
+      "district": "Ranchi",
+      "payload_json": {
+        "actorId": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+        "district": "Ranchi",
+        "fullName": "State Admin",
+        "actorName": "State Admin",
+        "actorRole": "ADMIN",
+        "actorPhone": "9999999999",
+        "designation": "State Health Administrator",
+        "facilityName": "NHM HQ",
+        "workerUniqueId": "ADMIN-000001"
+      },
+      "synced_to_sheets": 1,
+      "synced_at": null
+    },
+    {
+      "id": 664,
+      "timestamp": "2026-11-06T17:21:30.307217+00:00",
+      "event_type": "login",
+      "actor_role": "ADMIN",
+      "actor_id": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+      "actor_name": "State Admin",
+      "actor_phone": "9999999999",
+      "worker_unique_id": "ADMIN-000001",
+      "full_name": "State Admin",
+      "designation": "State Health Administrator",
+      "facility_name": "NHM HQ",
+      "facility_type": "State HQ",
+      "city_or_village": "Ranchi",
+      "district": "Ranchi",
+      "payload_json": {
+        "actorId": "0015fc58-c17d-4155-94ee-9226d9c6696b",
+        "district": "Ranchi",
+        "fullName": "State Admin",
+        "actorName": "State Admin",
+        "actorRole": "ADMIN",
+        "actorPhone": "9999999999",
+        "designation": "State Health Administrator",
+        "facilityName": "NHM HQ",
+        "workerUniqueId": "ADMIN-000001"
+      },
+      "synced_to_sheets": 1,
+      "synced_at": null
     }
   ]
 }
